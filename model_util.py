@@ -181,6 +181,24 @@ def get_spatial_assembly_layout_target_p_avg(
 
 	return p_max_exc, centroids, neuron_locations, positions_um, cluster_ids
 
+def generate_inhibitory_locations(assembly_radius, n_inhibitory):
+	"""Generate single circular assembly for inhibitory neurons"""
+	neuron_locations = []
+	cluster_index = []
+	assembly_radius_um = float(assembly_radius / um)
+
+	for _ in range(n_inhibitory):
+		x = np.random.normal(0, assembly_radius_um) * um
+		y = np.random.normal(0, assembly_radius_um) * um
+		neuron_locations.append((x, y))
+		cluster_index.append(-1)  # Inhibitory neurons have a separate cluster ID
+
+	positions_um = np.column_stack((
+		np.array([x / um for x, _ in neuron_locations], dtype=float),
+		np.array([y / um for _, y in neuron_locations], dtype=float),
+	))
+	cluster_ids = np.array(cluster_index, dtype=int)
+	return neuron_locations, positions_um, cluster_ids
 
 def compute_S_from_groups(spike_i, spike_t_ms, groups, bin_edges_ms, n_neurons):
 	"""Average over bins of std(spike counts across groups)."""

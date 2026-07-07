@@ -71,6 +71,13 @@ for layer_i in range(N_layers):
     layer_exc_neurons.y = y_coords_um * um
     layer_exc_neurons.column_id = cluster_ids
 
+    inh_neuron_locations, inh_positions_um, inh_cluster_ids = generate_inhibitory_locations(assembly_radius=sigma_c, n_inhibitory=N_inh)
+    inh_x_coords_um = inh_positions_um[:, 0]
+    inh_y_coords_um = inh_positions_um[:, 1]
+    layer_inh_neurons.x = inh_x_coords_um * um
+    layer_inh_neurons.y = inh_y_coords_um * um
+    layer_inh_neurons.column_id = inh_cluster_ids
+
     # Distance-decaying random connectivity:
     # p(d) = p_max_exc * exp(-distance / sigma_connection)
     syn_ee = Synapses(layer_exc_neurons, layer_exc_neurons, on_pre="g_e_post += 1")
