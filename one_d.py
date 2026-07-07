@@ -132,7 +132,7 @@ for cluster_idx in range(n_clusters):
     cluster_x = x_exc_um[cluster_ids == cluster_idx]
     cluster_y = dot_y - rng.uniform(0.0, dot_jitter, size=cluster_x.shape)
     ax_gauss.plot(x_grid, curve, color=color, linewidth=2, label=f"Cluster {cluster_idx} Gaussian")
-    ax_gauss.scatter(cluster_x, cluster_y, s=8, color="red", alpha=0.45)
+    ax_gauss.scatter(cluster_x, cluster_y, s=3, color="red", alpha=0.15)
 
 ax_gauss.axhline(0.0, color="black", linewidth=0.8, alpha=0.7)
 ax_gauss.set_xlabel("x position (um)")
