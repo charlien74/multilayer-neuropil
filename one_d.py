@@ -17,7 +17,7 @@ cluster_distance = 40 * um
 
 p_max_exc = 0.28
 p_max_inh = 0.2
-sigma_connection = 40 * um
+weight_decay_l = 40 * um
 
 neuron_locations = []
 cluster_indices = []
@@ -38,7 +38,7 @@ exc_neurons = NeuronGroup(
     reset="v = v_reset",
     refractory=refractory,
     name="exc_neurons")
-
+p
 inh_neurons = NeuronGroup(
     n_inh,
     eqs_inh,
@@ -50,16 +50,12 @@ inh_neurons = NeuronGroup(
 
 exc_neurons.tau_m = tau_m_e
 exc_neurons.mu = "1.1 + 0.1*rand()"
-exc_neurons.w_ee = 0.0156 * kHz
-exc_neurons.w_ei = -0.0297 * kHz
 exc_neurons.v = "rand()"
 exc_neurons.g_e = 0
 exc_neurons.g_i = 0
 
 inh_neurons.tau_m = tau_m_i
 inh_neurons.mu = "1 + 0.05*rand()"
-inh_neurons.w_ie = 0.0074 * kHz
-inh_neurons.w_ii = -0.0297 * kHz
 inh_neurons.v = "rand()"
 inh_neurons.g_e = 0
 inh_neurons.g_i = 0

@@ -2,23 +2,24 @@ from brian2 import *
 
 RANDOM_SEED = 2
 # Simulation settings
-duration = 5 * second
+duration = 2 * second
 defaultclock.dt = 0.1 * ms
 
 N_exc_c = 320
 N_inh = 400 
-R = 40 * um  # Radius of the pentacle
+R = 60 * um  # Radius of the pentacle
 sigma_c = 20 * um  # radius for Gaussian dist of assembly neurons
 sigma_connection = 10 * um
+weight_decay_l = 500 * um
 
 # Parameters copied from SSA paper https://arxiv.org/abs/1502.05656
 tau_m_e = 15 * ms
 tau_m_i = 10 * ms
-tau_e = 3 * ms
-tau_i = 2 * ms
+tau_e = 25 * ms
+tau_i = 15 * ms
 v_reset = 0.0
 v_th = 1.0
-refractory = 5 * ms
+refractory = 8 * ms
 
 eqs_exc = """
 dv/dt = (mu - v) / tau_m + w_ee * g_e + w_ei * g_i : 1 (unless refractory)
@@ -107,6 +108,35 @@ def generate_pentacle_layout(assembly_radius, pentacle_radius, n_clusters=5, neu
 	cluster_ids = np.array(cluster_index, dtype=int)
 	return centroids, neuron_locations, positions_um, cluster_ids
 
+def generate_lattice_layout(assembly_radius, centroids_distance=None, clusters_shape=(5, 4), neurons_per_cluster=80):
+	"""Generate centroid locations and sampled neuron positions for a lattice layout."""
+	if centroids_distance is None:
+		centroids_distance = 4 * assembly_radius
+	centroids = []
+	for i in range(clusters_shape[0]):
+		for j in range(clusters_shape[1]):
+			x = (i - (clusters_shape[0] - 1) / 2) * centroids_distance
+			y = (j - (clusters_shape[1] - 1) / 2) * centroids_distance
+			centroids.append((x, y))
+	neuron_locations = []
+	cluster_index = []
+	assembly_radius_um = float(assembly_radius / um)
+
+	n_clusters = clusters_shape[0] * clusters_shape[1]
+	for cluster_idx in range(n_clusters):
+		for _ in range(neurons_per_cluster):
+			x = centroids[cluster_idx][0] + np.random.normal(0, assembly_radius_um) * um
+			y = centroids[cluster_idx][1] + np.random.normal(0, assembly_radius_um) * um
+			neuron_locations.append((x, y))
+			cluster_index.append(cluster_idx)
+
+	positions_um = np.column_stack((
+		np.array([x / um for x, _ in neuron_locations], dtype=float),
+		np.array([y / um for _, y in neuron_locations], dtype=float),
+	))
+	cluster_ids = np.array(cluster_index, dtype=int)
+	return centroids, neuron_locations, positions_um, cluster_ids
+
 def generate_uniform_layout(radius, n_neurons=1600, center=(0.0 * um, 0.0 * um)):
 	
 	neuron_locations = []
@@ -124,62 +154,6 @@ def generate_uniform_layout(radius, n_neurons=1600, center=(0.0 * um, 0.0 * um))
 	))
 	cluster_ids = np.array(cluster_index, dtype=int)
 	return neuron_locations, positions_um, cluster_ids
-
-def get_spatial_assembly_layout_target_p_avg(
-	assembly_radius,
-	pentacle_radius,
-	sigma_connection,
-	target_overall_avg=0.05,
-	n_clusters=5,
-	neurons_per_cluster=N_exc_c,
-	tol=1e-6,
-	max_iter=80,
-):
-	if target_overall_avg <= 0.0 or target_overall_avg >= 1.0:
-		raise ValueError("target_overall_avg must be in (0, 1).")
-	if float(sigma_connection / um) <= 0.0:
-		raise ValueError("sigma_connection must be positive.")
-
-	centroids, neuron_locations, positions_um, cluster_ids = generate_pentacle_layout(
-		assembly_radius=assembly_radius,
-		pentacle_radius=pentacle_radius,
-		n_clusters=n_clusters,
-		neurons_per_cluster=neurons_per_cluster,
-	)
-
-	dx = positions_um[:, 0][:, None] - positions_um[:, 0][None, :]
-	dy = positions_um[:, 1][:, None] - positions_um[:, 1][None, :]
-	dist_um = np.sqrt(dx * dx + dy * dy)
-	base_kernel = np.exp(-dist_um / float(sigma_connection / um))
-	mask_offdiag = ~np.eye(base_kernel.shape[0], dtype=bool)
-
-	def avg_prob_for_pmax(p_max):
-		return float(np.minimum(1.0, p_max * base_kernel)[mask_offdiag].mean())
-
-	low = 0.0
-	high = 1.0
-	avg_high = avg_prob_for_pmax(high)
-	while avg_high < target_overall_avg and high < 1e6:
-		high *= 2.0
-		avg_high = avg_prob_for_pmax(high)
-
-	if avg_high < target_overall_avg:
-		raise ValueError("Could not find p_max_exc that achieves target_overall_avg.")
-
-	for _ in range(max_iter):
-		mid = 0.5 * (low + high)
-		avg_mid = avg_prob_for_pmax(mid)
-		if abs(avg_mid - target_overall_avg) <= tol:
-			p_max_exc = mid
-			break
-		if avg_mid < target_overall_avg:
-			low = mid
-		else:
-			high = mid
-	else:
-		p_max_exc = 0.5 * (low + high)
-
-	return p_max_exc, centroids, neuron_locations, positions_um, cluster_ids
 
 def generate_inhibitory_locations(assembly_radius, n_inhibitory):
 	"""Generate single circular assembly for inhibitory neurons"""
@@ -250,3 +224,15 @@ def compute_S_metrics(spike_i, spike_t_ms, cluster_ids, group_size, bin_size_ms=
 
 	S_shuff_mean = float(np.mean(S_shuff_vals)) if len(S_shuff_vals) > 0 else np.nan
 	return S, S_shuff_mean, S - S_shuff_mean
+
+def get_p_connection_in_out(R_ee, N_excitatory, cluster_size,p_ee_avg=0.2):
+    numerator = p_ee_avg * (N_excitatory - 1)
+    denominator = R_ee * (cluster_size - 1) + (N_excitatory - cluster_size)
+    p_ee_out = numerator / denominator
+    p_ee_in = R_ee * p_ee_out
+    if p_ee_in > 1:
+        print(f"R_ee={R_ee} too high (p_ee_in={p_ee_in:.4f} > 1); clamping.")
+        p_ee_in = 1.0
+        p_ee_out = p_ee_in / R_ee
+    print(f"R_ee={R_ee}: p_ee_in={p_ee_in:.4f}, p_ee_out={p_ee_out:.4f}")
+    return p_ee_in, p_ee_out

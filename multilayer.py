@@ -1,40 +1,80 @@
 from brian2 import *
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.collections import LineCollection
 from matplotlib.patches import Circle
-from matplotlib.collections import LineCollection
 from model_util import *
 
 start_scope()
 seed(RANDOM_SEED)
 
+weight_decay_l = 50 * um
+inh_weight_decay_l = 100 * um
+w_ee_base = 4 * 0.0156 * kHz
+w_ei_base = -0.0297 * kHz
+w_ie_base = 0.0074 * kHz
+w_ii_base = -0.0297 * kHz
+
+p_ee_interlayer = 0.1
+p_ei_interlayer = 0.1
+p_ie_interlayer = 0.1
+p_ii_interlayer = 0.1
+
+eqs_exc_multilayer = """
+dv/dt = (mu - v) / tau_m + g_e + g_i : 1 (unless refractory)
+dg_e/dt = -g_e / tau_e : Hz
+dg_i/dt = -g_i / tau_i : Hz
+mu : 1
+tau_m : second (constant)
+column_id : integer (constant)
+x: meter
+y: meter
+"""
+
+eqs_inh_multilayer = """
+dv/dt = (mu - v) / tau_m + g_e + g_i : 1 (unless refractory)
+dg_e/dt = -g_e / tau_e : Hz
+dg_i/dt = -g_i / tau_i : Hz
+mu : 1
+tau_m : second (constant)
+column_id : integer (constant)
+x: meter
+y: meter
+"""
+
 N_layers = 5
 
-TARGET_AVG_P_OVERALL = 0.025
-max_p_exc_interlayer = 0.25
-max_p_inh_interlayer = 0.25
-interlayer_decay_l = 20 * um
+p_avg=0.01
+
+R_ee = 1.2
+interlayer_decay_l = 30 * um
+inhibitory_sigma = R / 2
 num_exc_per_layer = N_exc_c * 5  # Number of excitatory neurons per layer
 uniform_radius = (R + 3 * sigma_c) / um  # Ensure neurons are within a reasonable distance from the center
 
 layers = []
 for layer_i in range(N_layers):
-    p_max_exc, centroids, neuron_locations, positions_um, cluster_ids = get_spatial_assembly_layout_target_p_avg(
-        assembly_radius=sigma_c,
-        pentacle_radius=R,
-        sigma_connection=sigma_connection,
-        target_overall_avg=TARGET_AVG_P_OVERALL,
-        n_clusters=5,
-        neurons_per_cluster=N_exc_c,
+    centroids, neuron_locations, positions_um, cluster_ids = generate_pentacle_layout(
+        assembly_radius=sigma_c, pentacle_radius=R, n_clusters=5, neurons_per_cluster=N_exc_c) 
+    inh_neuron_locations, inh_positions_um, inh_cluster_ids = generate_inhibitory_locations(assembly_radius=inhibitory_sigma, n_inhibitory=N_inh)
+
+    n_clusters = np.bincount(cluster_ids)
+    largest_community_size = int(n_clusters.max()) if n_clusters.size > 0 else num_exc_per_layer
+    p_ee_in, p_ee_out = get_p_connection_in_out(
+        p_ee_avg=p_avg,
+        R_ee=R_ee,
+        N_excitatory=num_exc_per_layer,
+        cluster_size=largest_community_size,
     )
     ## Remove assemblies from top layer 
     if layer_i == N_layers - 1:
         neuron_locations, positions_um, cluster_ids = generate_uniform_layout(radius=uniform_radius, n_neurons=1600)
+        inh_neuron_locations, inh_positions_um, _ = generate_uniform_layout(radius=uniform_radius, n_neurons=N_inh)
         num_exc_per_layer = len(neuron_locations)  # Update the number of excitatory neurons for the top layer
+        p_ee_in = p_avg
+        p_ee_out = p_avg
     layer_exc_neurons = NeuronGroup(
         num_exc_per_layer,
-        eqs_exc,
+        eqs_exc_multilayer,
         threshold='v > v_th',
         reset='v = v_reset',
         refractory=refractory,
@@ -42,7 +82,7 @@ for layer_i in range(N_layers):
     )
     layer_inh_neurons = inh_neurons = NeuronGroup(
         N_inh,
-        eqs_inh,
+        eqs_inh_multilayer,
         threshold='v > v_th',
         reset='v = v_reset',
         refractory=refractory,
@@ -51,19 +91,15 @@ for layer_i in range(N_layers):
 
     layer_exc_neurons.tau_m = tau_m_e
     layer_exc_neurons.mu = "1.1 + 0.1*rand()"
-    layer_exc_neurons.w_ee = 0.0156 * kHz
-    layer_exc_neurons.w_ei = -0.0297 * kHz
     layer_exc_neurons.v = "rand()"
-    layer_exc_neurons.g_e = 0
-    layer_exc_neurons.g_i = 0
+    layer_exc_neurons.g_e = 0 * Hz
+    layer_exc_neurons.g_i = 0 * Hz
 
     layer_inh_neurons.tau_m = tau_m_i
     layer_inh_neurons.mu = "1 + 0.05*rand()"
-    layer_inh_neurons.w_ie = 0.0074 * kHz
-    layer_inh_neurons.w_ii = -0.0297 * kHz
     layer_inh_neurons.v = "rand()"
-    layer_inh_neurons.g_e = 0
-    layer_inh_neurons.g_i = 0
+    layer_inh_neurons.g_e = 0 * Hz
+    layer_inh_neurons.g_i = 0 * Hz
 
     x_coords_um = positions_um[:, 0]
     y_coords_um = positions_um[:, 1]
@@ -71,29 +107,31 @@ for layer_i in range(N_layers):
     layer_exc_neurons.y = y_coords_um * um
     layer_exc_neurons.column_id = cluster_ids
 
-    inh_neuron_locations, inh_positions_um, inh_cluster_ids = generate_inhibitory_locations(assembly_radius=sigma_c, n_inhibitory=N_inh)
     inh_x_coords_um = inh_positions_um[:, 0]
     inh_y_coords_um = inh_positions_um[:, 1]
     layer_inh_neurons.x = inh_x_coords_um * um
     layer_inh_neurons.y = inh_y_coords_um * um
     layer_inh_neurons.column_id = inh_cluster_ids
 
-    # Distance-decaying random connectivity:
-    # p(d) = p_max_exc * exp(-distance / sigma_connection)
-    syn_ee = Synapses(layer_exc_neurons, layer_exc_neurons, on_pre="g_e_post += 1")
+    # E-E probabilities depend only on community membership; weights decay with distance.
+    syn_ee = Synapses(layer_exc_neurons, layer_exc_neurons, model="w_syn : Hz", on_pre="g_e_post += w_syn")
     syn_ee.connect(
         condition='i != j',
-        p='clip(p_max_exc * exp(-sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2) / sigma_connection), 0, 1)'
+        p='p_ee_out + (p_ee_in - p_ee_out) * int(column_id_pre == column_id_post)'
     )
+    syn_ee.w_syn = 'w_ee_base * exp(-sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2) / weight_decay_l)'
 
-    syn_ii = Synapses(layer_inh_neurons, layer_inh_neurons, on_pre="g_i_post += 1")
+    syn_ii = Synapses(layer_inh_neurons, layer_inh_neurons, model="w_syn : Hz", on_pre="g_i_post += w_syn")
     syn_ii.connect(condition="i != j", p=0.5)
+    syn_ii.w_syn = 'w_ii_base * exp(-sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2) / inh_weight_decay_l)'
 
-    syn_ei = Synapses(layer_inh_neurons, layer_exc_neurons, on_pre="g_i_post += 1")
+    syn_ei = Synapses(layer_inh_neurons, layer_exc_neurons, model="w_syn : Hz", on_pre="g_i_post += w_syn")
     syn_ei.connect(p=0.5)
+    syn_ei.w_syn = 'w_ei_base * exp(-sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2) / inh_weight_decay_l)'
 
-    syn_ie = Synapses(layer_exc_neurons, layer_inh_neurons, on_pre="g_e_post += 1")
+    syn_ie = Synapses(layer_exc_neurons, layer_inh_neurons, model="w_syn : Hz", on_pre="g_e_post += w_syn")
     syn_ie.connect(p=0.5)
+    syn_ie.w_syn = 'w_ie_base * exp(-sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2) / inh_weight_decay_l)'
 
     layers.append({
         "exc_neurons": layer_exc_neurons,
@@ -104,7 +142,9 @@ for layer_i in range(N_layers):
         "syn_ie": syn_ie,
         "positions_um": positions_um,
         "centroids": centroids if layer_i != N_layers - 1 else None,
-        "cluster_ids": cluster_ids
+        "cluster_ids": cluster_ids,
+        "p_ee_in": p_ee_in,
+        "p_ee_out": p_ee_out,
         })
     
 # Establish connections between layers based on distance and decay function
@@ -118,14 +158,18 @@ for layer_i in range(N_layers - 1):
     post_inh = post_layer['inh_neurons']
 
     # Maybe in the future max_p and decay_l can be different for excitatory vs inhibitory connections?
-    syn_ee_inter = Synapses(pre_exc, post_exc, on_pre="g_e_post += 1")
-    syn_ee_inter.connect(condition="True", p='max_p_exc_interlayer * exp(-sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2) / interlayer_decay_l)')
-    syn_ei_inter = Synapses(pre_exc, post_inh, on_pre="g_e_post += 1")
-    syn_ei_inter.connect(condition="True", p='max_p_exc_interlayer * exp(-sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2) / interlayer_decay_l)')
-    syn_ie_inter = Synapses(pre_inh, post_exc, on_pre="g_i_post += 1")
-    syn_ie_inter.connect(condition="True", p='max_p_inh_interlayer * exp(-sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2) / interlayer_decay_l)')
-    syn_ii_inter = Synapses(pre_inh, post_inh, on_pre="g_i_post += 1")
-    syn_ii_inter.connect(condition="True", p='max_p_inh_interlayer * exp(-sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2) / interlayer_decay_l)')
+    syn_ee_inter = Synapses(pre_exc, post_exc, model="w_syn : Hz", on_pre="g_e_post += w_syn")
+    syn_ee_inter.connect(condition="True", p='p_ee_interlayer')
+    syn_ee_inter.w_syn = 'w_ee_base * exp(-sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2) / weight_decay_l)'
+    syn_ei_inter = Synapses(pre_exc, post_inh, model="w_syn : Hz", on_pre="g_e_post += w_syn")
+    syn_ei_inter.connect(condition="True", p='p_ei_interlayer')
+    syn_ei_inter.w_syn = 'w_ie_base * exp(-sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2) / weight_decay_l)'
+    syn_ie_inter = Synapses(pre_inh, post_exc, model="w_syn : Hz", on_pre="g_i_post += w_syn")
+    syn_ie_inter.connect(condition="True", p='p_ie_interlayer')
+    syn_ie_inter.w_syn = 'w_ei_base * exp(-sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2) / weight_decay_l)'
+    syn_ii_inter = Synapses(pre_inh, post_inh, model="w_syn : Hz", on_pre="g_i_post += w_syn")
+    syn_ii_inter.connect(condition="True", p='p_ii_interlayer')
+    syn_ii_inter.w_syn = 'w_ii_base * exp(-sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2) / weight_decay_l)'
     interlayer_synapses.append({'syn_ee': syn_ee_inter,
                                 'syn_ei': syn_ei_inter,
                                 'syn_ie': syn_ie_inter,
@@ -184,15 +228,11 @@ for layer_i in range(N_layers):
     ax_raster = axes[layer_i, 1]
 
     layer_positions_um = layer['positions_um']
-    src_idx = np.asarray(layer['syn_ee'].i[:], dtype=int)
-    dst_idx = np.asarray(layer['syn_ee'].j[:], dtype=int)
-    if src_idx.size > 0:
-        segments = np.stack((layer_positions_um[src_idx], layer_positions_um[dst_idx]), axis=1)
-    else:
-        segments = np.empty((0, 2, 2), dtype=float)
 
-    line_collection = LineCollection(segments, colors='k', linewidths=0.2, alpha=0.12)
-    ax_spatial.add_collection(line_collection)
+    inh_neurons = layer['inh_neurons']
+    inh_x = np.array(inh_neurons.x / um)
+    inh_y = np.array(inh_neurons.y / um)
+    ax_spatial.scatter(inh_x, inh_y, s=8, c='tab:blue', alpha=0.2)
     ax_spatial.scatter(layer_positions_um[:, 0], layer_positions_um[:, 1], s=8, c='tab:red', alpha=0.85)
 
     layer_centroids = layer['centroids']
@@ -236,15 +276,21 @@ for layer_i in range(N_layers):
 
     # Label excitatory index ranges by cluster ID.
     ax_raster.set_xlim(0.0, duration_ms)
-    for cluster_idx in range(5):
-        y_start = cluster_idx * N_exc_c
-        y_end = (cluster_idx + 1) * N_exc_c
-        y_center = 0.5 * (y_start + y_end - 1)
-        if cluster_idx % 2 == 0:
-            ax_raster.axhspan(y_start, y_end, color='gray', alpha=0.04)
-        ax_raster.axhline(y_start, color='gray', linewidth=0.4, alpha=0.5)
-        ax_raster.text(1.02, y_center, f'C{cluster_idx}', transform=ax_raster.get_yaxis_transform(), fontsize=8, color='black', ha='left', va='center', clip_on=False)
-    ax_raster.axhline(5 * N_exc_c, color='gray', linewidth=0.6, alpha=0.8)
+    if layer_i != N_layers - 1:
+        # Pentacle layers with clusters
+        for cluster_idx in range(5):
+            y_start = cluster_idx * N_exc_c
+            y_end = (cluster_idx + 1) * N_exc_c
+            y_center = 0.5 * (y_start + y_end - 1)
+            if cluster_idx % 2 == 0:
+                ax_raster.axhspan(y_start, y_end, color='gray', alpha=0.04)
+            ax_raster.axhline(y_start, color='gray', linewidth=0.4, alpha=0.5)
+            ax_raster.text(1.02, y_center, f'C{cluster_idx}', transform=ax_raster.get_yaxis_transform(), fontsize=8, color='black', ha='left', va='center', clip_on=False)
+        ax_raster.axhline(5 * N_exc_c, color='gray', linewidth=0.6, alpha=0.8)
+    else:
+        # Readout layer (uniform)
+        ax_raster.axhline(num_exc_per_layer, color='gray', linewidth=0.6, alpha=0.8)
+        ax_raster.text(1.02, 0.5 * num_exc_per_layer, 'readout', transform=ax_raster.get_yaxis_transform(), fontsize=8, color='tab:red', ha='left', va='center', clip_on=False)
     ax_raster.text(1.02, num_exc_per_layer + 0.5 * N_inh, 'inh', transform=ax_raster.get_yaxis_transform(), fontsize=8, color='tab:blue', ha='left', va='center', clip_on=False)
     ax_raster.set_ylim(-1, num_exc_per_layer + N_inh + 1)
 
@@ -253,7 +299,8 @@ fig.text(
 	0.01,
 	f"Pentacle radius: {float(R / um):.1f} um | "
 	f"Cluster radius (stdev): {float(sigma_c / um):.1f} um | "
-	f"Max excitatory connection probability: {p_max_exc:.3f} | "
+    f"R_ee: {R_ee:.2f} | "
+    f"Layer 0 p_ee_in/out: {layers[0]['p_ee_in']:.3f}/{layers[0]['p_ee_out']:.3f} | "
 	f"Random seed: {RANDOM_SEED}",
 	fontsize=9,
 	ha='left',
