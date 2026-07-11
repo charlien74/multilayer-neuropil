@@ -44,6 +44,7 @@ Using a neuronal model consisting of multiple layers to explore neuropil dynamic
 - Prints per-layer spike counts and assembly metrics to stdout.
 - Saves the combined spatial/raster figure to:
 	- `output/spatial_and_raster_all_layers.png`
+	- `output/spatial_structure_3d_columns.png` (3D 5-layer structural view with sampled dense intra-column E-E edges)
 
 ## Common Parameters to Modify
 

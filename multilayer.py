@@ -2,6 +2,7 @@ from brian2 import *
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle
+from pathlib import Path
 from model_util import *
 
 start_scope()
@@ -45,7 +46,7 @@ N_layers = 5
 
 p_avg=0.01
 
-R_ee = 1.2
+R_ee = 1.0
 interlayer_decay_l = 30 * um
 inhibitory_sigma = R / 2
 num_exc_per_layer = N_exc_c * 5  # Number of excitatory neurons per layer
@@ -218,6 +219,209 @@ print(f"S: {S:.6f}")
 print(f"<S_shuff>: {S_shuff_mean:.6f}")
 print(f"S - <S_shuff>: {S_minus_Sshuff:.6f}")
 
+def plot_multilayer_3d_structure(layers, interlayer_synapses, output_path):
+    """Plot a 3D view of all layers and sampled E-E edges to highlight column structure."""
+    fig = plt.figure(figsize=(14, 11))
+    ax = fig.add_subplot(111, projection='3d')
+
+    layer_spacing_um = 140.0
+    cmap = plt.get_cmap('tab10')
+
+    # Keep edge counts limited so the figure stays legible and fast to render.
+    max_incolumn_edges_per_column = 420
+    max_outcolumn_edges_per_layer = 30
+
+    all_positions_um = np.vstack([layer['positions_um'] for layer in layers])
+    x_min = float(np.min(all_positions_um[:, 0]))
+    x_max = float(np.max(all_positions_um[:, 0]))
+    y_min = float(np.min(all_positions_um[:, 1]))
+    y_max = float(np.max(all_positions_um[:, 1]))
+    x_pad = 15.0
+    y_pad = 15.0
+    x_min -= x_pad
+    x_max += x_pad
+    y_min -= y_pad
+    y_max += y_pad
+
+    x_plane = np.array([[x_min, x_max], [x_min, x_max]])
+    y_plane = np.array([[y_min, y_min], [y_max, y_max]])
+
+    for layer_i, layer in enumerate(layers):
+        z_val = layer_i * layer_spacing_um
+        positions_um = layer['positions_um']
+        cluster_ids = np.asarray(layer['cluster_ids'], dtype=int)
+
+        # Add a translucent slab and edge frame so layer separation is obvious.
+        slab_color = (0.90, 0.94, 0.98) if (layer_i % 2 == 0) else (0.95, 0.95, 0.95)
+        z_plane = np.full((2, 2), z_val)
+        ax.plot_surface(
+            x_plane,
+            y_plane,
+            z_plane,
+            color=slab_color,
+            alpha=0.16,
+            shade=False,
+            linewidth=0,
+        )
+
+        frame_xy = np.array([
+            [x_min, y_min],
+            [x_max, y_min],
+            [x_max, y_max],
+            [x_min, y_max],
+            [x_min, y_min],
+        ])
+        ax.plot(
+            frame_xy[:, 0],
+            frame_xy[:, 1],
+            np.full(frame_xy.shape[0], z_val),
+            color='black',
+            alpha=0.35,
+            linewidth=0.9,
+        )
+
+        unique_cols = np.unique(cluster_ids)
+        for c in unique_cols:
+            mask = cluster_ids == c
+            color = cmap(int(c) % 10)
+            ax.scatter(
+                positions_um[mask, 0],
+                positions_um[mask, 1],
+                np.full(np.sum(mask), z_val),
+                s=18,
+                color=color,
+                alpha=0.07,
+                edgecolors='none',
+            )
+            ax.scatter(
+                positions_um[mask, 0],
+                positions_um[mask, 1],
+                np.full(np.sum(mask), z_val),
+                s=6,
+                color=color,
+                alpha=0.88,
+                edgecolors='none',
+            )
+            if np.sum(mask) > 0:
+                cx = float(np.mean(positions_um[mask, 0]))
+                cy = float(np.mean(positions_um[mask, 1]))
+                ax.scatter(
+                    [cx],
+                    [cy],
+                    [z_val],
+                    s=42,
+                    color=color,
+                    edgecolors='black',
+                    linewidths=0.3,
+                    alpha=0.95,
+                )
+                ax.text(cx, cy, z_val + 6.0, f'C{int(c)}', fontsize=8, color=color)
+
+        syn_ee = layer['syn_ee']
+        pre_idx = np.asarray(syn_ee.i[:], dtype=int)
+        post_idx = np.asarray(syn_ee.j[:], dtype=int)
+        same_column = cluster_ids[pre_idx] == cluster_ids[post_idx]
+
+        for c in unique_cols:
+            col_mask = same_column & (cluster_ids[pre_idx] == c)
+            edge_ids = np.flatnonzero(col_mask)
+            if edge_ids.size == 0:
+                continue
+            if edge_ids.size > max_incolumn_edges_per_column:
+                edge_ids = np.random.choice(edge_ids, size=max_incolumn_edges_per_column, replace=False)
+
+            color = cmap(int(c) % 10)
+            for edge_idx in edge_ids:
+                i_pre = pre_idx[edge_idx]
+                i_post = post_idx[edge_idx]
+                ax.plot(
+                    [positions_um[i_pre, 0], positions_um[i_post, 0]],
+                    [positions_um[i_pre, 1], positions_um[i_post, 1]],
+                    [z_val, z_val],
+                    color=color,
+                    alpha=0.30,
+                    linewidth=0.85,
+                )
+
+        # Draw a smaller number of out-of-column edges in gray for contrast.
+        out_edge_ids = np.flatnonzero(~same_column)
+        if out_edge_ids.size > 0:
+            if out_edge_ids.size > max_outcolumn_edges_per_layer:
+                out_edge_ids = np.random.choice(out_edge_ids, size=max_outcolumn_edges_per_layer, replace=False)
+            for edge_idx in out_edge_ids:
+                i_pre = pre_idx[edge_idx]
+                i_post = post_idx[edge_idx]
+                ax.plot(
+                    [positions_um[i_pre, 0], positions_um[i_post, 0]],
+                    [positions_um[i_pre, 1], positions_um[i_post, 1]],
+                    [z_val, z_val],
+                    color='gray',
+                    alpha=0.015,
+                    linewidth=0.25,
+                )
+
+        # Label each layer near the center to make depth ordering explicit.
+        ax.text(
+            x_max + 4.0,
+            y_min,
+            z_val,
+            f'Layer {layer_i}',
+            fontsize=10,
+            color='black',
+        )
+
+    # Show a sparse set of strongest inter-layer E-E links (highest spatially decayed weight).
+    max_interlayer_edges_per_pair = 120
+    for layer_i, inter_syn in enumerate(interlayer_synapses):
+        pre_positions_um = np.asarray(layers[layer_i]['positions_um'], dtype=float)
+        post_positions_um = np.asarray(layers[layer_i + 1]['positions_um'], dtype=float)
+        z_pre = layer_i * layer_spacing_um
+        z_post = (layer_i + 1) * layer_spacing_um
+
+        syn_ee_inter = inter_syn['syn_ee']
+        pre_idx = np.asarray(syn_ee_inter.i[:], dtype=int)
+        post_idx = np.asarray(syn_ee_inter.j[:], dtype=int)
+        w_syn = np.asarray(syn_ee_inter.w_syn[:] / Hz, dtype=float)
+        if pre_idx.size == 0:
+            continue
+
+        top_n = min(max_interlayer_edges_per_pair, pre_idx.size)
+        top_ids = np.argpartition(w_syn, -top_n)[-top_n:]
+        top_ids = top_ids[np.argsort(w_syn[top_ids])[::-1]]
+
+        # Normalize for alpha scaling among selected links.
+        w_sel = w_syn[top_ids]
+        w_min = float(np.min(w_sel))
+        w_max = float(np.max(w_sel))
+        w_span = max(w_max - w_min, 1e-12)
+
+        for edge_idx in top_ids:
+            i_pre = pre_idx[edge_idx]
+            i_post = post_idx[edge_idx]
+            strength = (w_syn[edge_idx] - w_min) / w_span
+            ax.plot(
+                [pre_positions_um[i_pre, 0], post_positions_um[i_post, 0]],
+                [pre_positions_um[i_pre, 1], post_positions_um[i_post, 1]],
+                [z_pre, z_post],
+                color='black',
+                alpha=0.08 + 0.22 * strength,
+                linewidth=0.35 + 0.65 * strength,
+            )
+
+    ax.set_xlim(x_min, x_max + 25.0)
+    ax.set_ylim(y_min, y_max)
+    ax.set_zlim(-0.5 * layer_spacing_um, (len(layers) - 1 + 0.5) * layer_spacing_um)
+    ax.set_zticks([])
+    ax.set_box_aspect((x_max - x_min, y_max - y_min, 1.05 * (len(layers) - 1) * layer_spacing_um))
+    ax.set_xlabel('x (um)')
+    ax.set_ylabel('y (um)')
+    ax.set_title('5-layer 3D structure')
+    ax.view_init(elev=22, azim=-57)
+
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=300)
+    return fig
+
 # Plot all layers: one row per layer, spatial in col 1 and raster in col 2.
 fig, axes = plt.subplots(N_layers, 2, figsize=(16, 5 * N_layers), squeeze=False)
 duration_ms = float(duration / ms)
@@ -308,5 +512,14 @@ fig.text(
 )
 plt.tight_layout(rect=(0.0, 0.06, 0.96, 1.0))
 plt.savefig('output/spatial_and_raster_all_layers.png', dpi=300)
+
+Path('output').mkdir(parents=True, exist_ok=True)
+plot_multilayer_3d_structure(
+    layers,
+    interlayer_synapses,
+    output_path='output/spatial_structure_3d_columns.png',
+)
+
+print('Saved: output/spatial_structure_3d_columns.png')
 plt.show()
 
