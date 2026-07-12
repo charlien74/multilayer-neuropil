@@ -6,7 +6,7 @@ duration = 2 * second
 defaultclock.dt = 0.1 * ms
 
 N_exc_c = 320
-N_inh = 400 
+N_inh = 700 
 R = 60 * um  # Radius of the pentacle
 sigma_c = 20 * um  # radius for Gaussian dist of assembly neurons
 sigma_connection = 10 * um
