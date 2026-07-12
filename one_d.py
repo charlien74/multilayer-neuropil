@@ -38,7 +38,7 @@ exc_neurons = NeuronGroup(
     reset="v = v_reset",
     refractory=refractory,
     name="exc_neurons")
-p
+
 inh_neurons = NeuronGroup(
     n_inh,
     eqs_inh,

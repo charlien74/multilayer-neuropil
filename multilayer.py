@@ -43,7 +43,7 @@ y: meter
 """
 
 N_layers = 5
-uniform_layer_start = N_layers - 5
+uniform_layer_start = N_layers - 2
 
 p_avg=0.01
 
@@ -483,6 +483,67 @@ def plot_uniform_layer_proxy_columns(layers, output_path, uniform_start_idx):
     fig.savefig(output_path, dpi=300)
     return fig
 
+
+def plot_structured_and_uniform_proxy_pair(layers, output_path, uniform_start_idx):
+    """Plot structured layer (top) and uniform proxy-column layer (bottom)."""
+    structured_idx = uniform_start_idx - 1
+    uniform_idx = uniform_start_idx
+
+    if structured_idx < 0 or uniform_idx >= len(layers):
+        print("Could not determine structured/uniform layer pair; skipping comparison figure.")
+        return None
+
+    structured_layer = layers[structured_idx]
+    uniform_layer = layers[uniform_idx]
+
+    fig, axes = plt.subplots(2, 1, figsize=(9, 13), constrained_layout=True)
+    cmap = plt.get_cmap('tab10')
+
+    # Top panel: structured layer with assembly colors.
+    structured_positions_um = np.asarray(structured_layer['positions_um'], dtype=float)
+    structured_ids = np.asarray(structured_layer['cluster_ids'], dtype=int)
+    for c in np.unique(structured_ids):
+        mask = structured_ids == c
+        axes[0].scatter(
+            structured_positions_um[mask, 0],
+            structured_positions_um[mask, 1],
+            s=12,
+            alpha=0.88,
+            color=cmap(int(c) % 10),
+            edgecolors='none',
+            label=f'C{int(c)}',
+        )
+    axes[0].set_aspect('equal', adjustable='box')
+    axes[0].set_xlabel('x (um)')
+    axes[0].set_ylabel('y (um)')
+    axes[0].set_title(f'Structured layer {structured_idx}: assembly colors')
+    axes[0].grid(alpha=0.2)
+    axes[0].legend(loc='upper right', fontsize=9)
+
+    # Bottom panel: uniform layer with proxy-column colors.
+    uniform_positions_um = np.asarray(uniform_layer['positions_um'], dtype=float)
+    uniform_ids = np.asarray(uniform_layer['cluster_ids'], dtype=int)
+    for c in np.unique(uniform_ids):
+        mask = uniform_ids == c
+        axes[1].scatter(
+            uniform_positions_um[mask, 0],
+            uniform_positions_um[mask, 1],
+            s=12,
+            alpha=0.88,
+            color=cmap(int(c) % 10),
+            edgecolors='none',
+            label=f'C{int(c)}',
+        )
+    axes[1].set_aspect('equal', adjustable='box')
+    axes[1].set_xlabel('x (um)')
+    axes[1].set_ylabel('y (um)')
+    axes[1].set_title(f'Uniform layer {uniform_idx}: proxy-column colors')
+    axes[1].grid(alpha=0.2)
+    axes[1].legend(loc='upper right', fontsize=9)
+
+    fig.savefig(output_path, dpi=300)
+    return fig
+
 # Plot all layers: one row per layer, spatial in col 1 and raster in col 2.
 fig, axes = plt.subplots(N_layers, 2, figsize=(16, 5 * N_layers), squeeze=False)
 duration_ms = float(duration / ms)
@@ -607,7 +668,14 @@ plot_uniform_layer_proxy_columns(
     uniform_start_idx=uniform_layer_start,
 )
 
+plot_structured_and_uniform_proxy_pair(
+    layers,
+    output_path='output/structured_vs_uniform_proxy_pair.png',
+    uniform_start_idx=uniform_layer_start,
+)
+
 print('Saved: output/spatial_structure_3d_columns.png')
 print('Saved: output/uniform_layer_proxy_columns.png')
+print('Saved: output/structured_vs_uniform_proxy_pair.png')
 plt.show()
 
