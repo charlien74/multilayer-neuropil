@@ -45,6 +45,10 @@ Using a neuronal model consisting of multiple layers to explore neuropil dynamic
 - Saves the combined spatial/raster figure to:
 	- `output/spatial_and_raster_all_layers.png`
 	- `output/spatial_structure_3d_columns.png` (3D 5-layer structural view with sampled dense intra-column E-E edges)
+	- `output/adjacency_global_sparse.npz` (global weighted adjacency from Brian2 synapses in CSR arrays)
+	- `output/adjacency_global_layer_offsets.csv` (row/column offsets for each layer's E and I blocks)
+	- `output/eigenvalues_global_dominant.png` (dominant global eigenvalues in the complex plane)
+	- `output/eigenvalues_layer_ee.png` (full E-E eigenspectrum per layer)
 
 ## Common Parameters to Modify
 

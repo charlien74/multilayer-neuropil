@@ -4,6 +4,13 @@ import numpy as np
 from matplotlib.patches import Circle
 from pathlib import Path
 from model_util import *
+from spectral_analysis import (
+    compute_global_dominant_eigenvalues,
+    compute_layer_ee_eigenvalues,
+    extract_global_weighted_adjacency,
+    plot_complex_spectrum,
+    plot_layer_ee_spectra,
+)
 
 start_scope()
 seed(RANDOM_SEED)
@@ -43,7 +50,7 @@ y: meter
 """
 
 N_layers = 5
-uniform_layer_start = N_layers - 2
+uniform_layer_start = N_layers - 5
 
 p_avg=0.01
 
@@ -232,10 +239,41 @@ for layer_i in range(N_layers):
     print(f"S - <S_shuff>: {S_minus_Sshuff:.6f}")
     S_hat_list.append(S_minus_Sshuff)
 
+Path('output').mkdir(parents=True, exist_ok=True)
+
 with open('output/S_hat_values.txt', 'w') as f:
     f.write("Layer,S_hat\n")
     for layer_i in range(N_layers):
         f.write(f"{layer_i},{S_hat_list[layer_i]:.6f}\n")
+
+adjacency_global, layer_index_info = extract_global_weighted_adjacency(layers, interlayer_synapses)
+np.savez_compressed(
+    'output/adjacency_global_sparse.npz',
+    data=adjacency_global.data,
+    indices=adjacency_global.indices,
+    indptr=adjacency_global.indptr,
+    shape=np.asarray(adjacency_global.shape, dtype=np.int64),
+)
+
+with open('output/adjacency_global_layer_offsets.csv', 'w') as f:
+    f.write('layer,exc_offset,inh_offset,n_exc,n_inh\n')
+    for layer_i, info in enumerate(layer_index_info):
+        f.write(
+            f"{layer_i},{info['exc_offset']},{info['inh_offset']},{info['n_exc']},{info['n_inh']}\n"
+        )
+
+global_eigs = compute_global_dominant_eigenvalues(adjacency_global, k=1600)
+plot_complex_spectrum(
+    global_eigs,
+    output_path='output/eigenvalues_global_dominant.png',
+    title='Global adjacency dominant eigenvalues',
+)
+
+layer_ee_eigs = compute_layer_ee_eigenvalues(layers)
+plot_layer_ee_spectra(
+    layer_ee_eigs,
+    output_path='output/eigenvalues_layer_ee.png',
+)
 
 
 def plot_multilayer_3d_structure(layers, interlayer_synapses, output_path):
