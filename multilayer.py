@@ -22,10 +22,10 @@ w_ei_base = -0.0297 * kHz
 w_ie_base = 0.0074 * kHz
 w_ii_base = -0.0297 * kHz
 
-p_ee_interlayer = 0.01
-p_ei_interlayer = 0.01
-p_ie_interlayer = 0.01
-p_ii_interlayer = 0.01
+p_ee_interlayer = 0.015
+p_ei_interlayer = 0.015
+p_ie_interlayer = 0.015
+p_ii_interlayer = 0.015
 
 eqs_exc_multilayer = """
 dv/dt = (mu - v) / tau_m + g_e + g_i : 1 (unless refractory)
@@ -50,7 +50,7 @@ y: meter
 """
 
 N_layers = 5
-uniform_layer_start = N_layers - 5
+uniform_layer_start = N_layers - 3
 
 p_avg=0.02
 
@@ -62,7 +62,7 @@ def assign_nearest_centroid_ids(positions_um, centroids):
     dist2 = np.sum(diffs * diffs, axis=2)
     return np.argmin(dist2, axis=1).astype(int)
 
-R_ee = 1.0
+R_ee = 1.5
 interlayer_decay_l = 30 * um
 inhibitory_sigma = R / 2
 num_exc_per_layer = N_exc_c * 5  # Number of excitatory neurons per layer
@@ -196,6 +196,13 @@ for layer_i in range(N_layers - 1):
 spike_mon_exc = [SpikeMonitor(layer['exc_neurons']) for layer in layers]
 spike_mon_inh = [SpikeMonitor(layer['inh_neurons']) for layer in layers]
 
+# Record raw excitatory voltage traces for all non-readout layers.
+lower_layer_indices = list(range(N_layers - 1))
+state_mon_exc_lower = [
+    StateMonitor(layers[layer_i]['exc_neurons'], 'v', record=True)
+    for layer_i in lower_layer_indices
+]
+
 # Explicitly build a Network so objects stored in container structures are included.
 net_objects = []
 for layer in layers:
@@ -216,8 +223,42 @@ for inter_syn in interlayer_synapses:
     ])
 net_objects.extend(spike_mon_exc)
 net_objects.extend(spike_mon_inh)
+net_objects.extend(state_mon_exc_lower)
 
 Network(net_objects).run(duration)
+
+# Persist raw lower-layer voltages and geometry for downstream readout processing.
+expected_samples = int(np.round(float(duration / defaultclock.dt)))
+voltage_blocks = []
+for monitor in state_mon_exc_lower:
+    v_block = np.asarray(monitor.v[:], dtype=np.float32)
+    if v_block.shape[1] > expected_samples:
+        v_block = v_block[:, :expected_samples]
+    elif v_block.shape[1] < expected_samples:
+        raise RuntimeError(
+            f"StateMonitor produced {v_block.shape[1]} samples, expected at least {expected_samples}."
+        )
+    voltage_blocks.append(v_block)
+
+voltage_tensor = np.stack(voltage_blocks, axis=0)
+lower_positions_um = np.stack(
+    [np.asarray(layers[layer_i]['positions_um'], dtype=np.float32) for layer_i in lower_layer_indices],
+    axis=0,
+)
+readout_positions_um = np.asarray(layers[N_layers - 1]['positions_um'], dtype=np.float32)
+time_ms = np.asarray(state_mon_exc_lower[0].t[:] / ms, dtype=np.float32)
+if time_ms.shape[0] > expected_samples:
+    time_ms = time_ms[:expected_samples]
+
+Path('output/internal').mkdir(parents=True, exist_ok=True)
+np.savez_compressed(
+    'output/internal/lower_layer_voltage_raw.npz',
+    voltage_lower_exc=voltage_tensor,
+    time_ms=time_ms,
+    lower_layer_indices=np.asarray(lower_layer_indices, dtype=np.int32),
+    lower_positions_um=lower_positions_um,
+    readout_positions_um=readout_positions_um,
+)
 
 S_hat_list = []
 for layer_i in range(N_layers):
@@ -239,41 +280,43 @@ for layer_i in range(N_layers):
     print(f"S - <S_shuff>: {S_minus_Sshuff:.6f}")
     S_hat_list.append(S_minus_Sshuff)
 
-Path('output').mkdir(parents=True, exist_ok=True)
+Path('output/public').mkdir(parents=True, exist_ok=True)
 
-with open('output/S_hat_values.txt', 'w') as f:
+with open('output/public/S_hat_values.txt', 'w') as f:
     f.write("Layer,S_hat\n")
     for layer_i in range(N_layers):
         f.write(f"{layer_i},{S_hat_list[layer_i]:.6f}\n")
 
-adjacency_global, layer_index_info = extract_global_weighted_adjacency(layers, interlayer_synapses)
-np.savez_compressed(
-    'output/internal/adjacency_global_sparse.npz',
-    data=adjacency_global.data,
-    indices=adjacency_global.indices,
-    indptr=adjacency_global.indptr,
-    shape=np.asarray(adjacency_global.shape, dtype=np.int64),
-)
 
-with open('output/internal/adjacency_global_layer_offsets.csv', 'w') as f:
-    f.write('layer,exc_offset,inh_offset,n_exc,n_inh\n')
-    for layer_i, info in enumerate(layer_index_info):
-        f.write(
-            f"{layer_i},{info['exc_offset']},{info['inh_offset']},{info['n_exc']},{info['n_inh']}\n"
-        )
+## Spectral analysis
+# adjacency_global, layer_index_info = extract_global_weighted_adjacency(layers, interlayer_synapses)
+# np.savez_compressed(
+#     'output/internal/adjacency_global_sparse.npz',
+#     data=adjacency_global.data,
+#     indices=adjacency_global.indices,
+#     indptr=adjacency_global.indptr,
+#     shape=np.asarray(adjacency_global.shape, dtype=np.int64),
+# )
 
-global_eigs = compute_global_dominant_eigenvalues(adjacency_global, k=120)
-plot_complex_spectrum(
-    global_eigs,
-    output_path='output/eigenvalues_global_dominant.png',
-    title='Global adjacency dominant eigenvalues',
-)
+# with open('output/internal/adjacency_global_layer_offsets.csv', 'w') as f:
+#     f.write('layer,exc_offset,inh_offset,n_exc,n_inh\n')
+#     for layer_i, info in enumerate(layer_index_info):
+#         f.write(
+#             f"{layer_i},{info['exc_offset']},{info['inh_offset']},{info['n_exc']},{info['n_inh']}\n"
+#         )
 
-layer_ee_eigs = compute_layer_ee_eigenvalues(layers)
-plot_layer_ee_spectra(
-    layer_ee_eigs,
-    output_path='output/public/eigenvalues_layer_ee.png',
-)
+# global_eigs = compute_global_dominant_eigenvalues(adjacency_global, k=120)
+# plot_complex_spectrum(
+#     global_eigs,
+#     output_path='output/eigenvalues_global_dominant.png',
+#     title='Global adjacency dominant eigenvalues',
+# )
+
+# layer_ee_eigs = compute_layer_ee_eigenvalues(layers)
+# plot_layer_ee_spectra(
+#     layer_ee_eigs,
+#     output_path='output/public/eigenvalues_layer_ee.png',
+# )
 
 
 def plot_multilayer_3d_structure(layers, interlayer_synapses, output_path):
