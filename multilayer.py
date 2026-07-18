@@ -22,10 +22,10 @@ w_ei_base = -0.0297 * kHz
 w_ie_base = 0.0074 * kHz
 w_ii_base = -0.0297 * kHz
 
-p_ee_interlayer = 0.1
-p_ei_interlayer = 0.1
-p_ie_interlayer = 0.1
-p_ii_interlayer = 0.1
+p_ee_interlayer = 0.01
+p_ei_interlayer = 0.01
+p_ie_interlayer = 0.01
+p_ii_interlayer = 0.01
 
 eqs_exc_multilayer = """
 dv/dt = (mu - v) / tau_m + g_e + g_i : 1 (unless refractory)
@@ -52,7 +52,7 @@ y: meter
 N_layers = 5
 uniform_layer_start = N_layers - 5
 
-p_avg=0.01
+p_avg=0.02
 
 
 def assign_nearest_centroid_ids(positions_um, centroids):
@@ -248,21 +248,21 @@ with open('output/S_hat_values.txt', 'w') as f:
 
 adjacency_global, layer_index_info = extract_global_weighted_adjacency(layers, interlayer_synapses)
 np.savez_compressed(
-    'output/adjacency_global_sparse.npz',
+    'output/internal/adjacency_global_sparse.npz',
     data=adjacency_global.data,
     indices=adjacency_global.indices,
     indptr=adjacency_global.indptr,
     shape=np.asarray(adjacency_global.shape, dtype=np.int64),
 )
 
-with open('output/adjacency_global_layer_offsets.csv', 'w') as f:
+with open('output/internal/adjacency_global_layer_offsets.csv', 'w') as f:
     f.write('layer,exc_offset,inh_offset,n_exc,n_inh\n')
     for layer_i, info in enumerate(layer_index_info):
         f.write(
             f"{layer_i},{info['exc_offset']},{info['inh_offset']},{info['n_exc']},{info['n_inh']}\n"
         )
 
-global_eigs = compute_global_dominant_eigenvalues(adjacency_global, k=1600)
+global_eigs = compute_global_dominant_eigenvalues(adjacency_global, k=120)
 plot_complex_spectrum(
     global_eigs,
     output_path='output/eigenvalues_global_dominant.png',
@@ -272,7 +272,7 @@ plot_complex_spectrum(
 layer_ee_eigs = compute_layer_ee_eigenvalues(layers)
 plot_layer_ee_spectra(
     layer_ee_eigs,
-    output_path='output/eigenvalues_layer_ee.png',
+    output_path='output/public/eigenvalues_layer_ee.png',
 )
 
 
@@ -691,29 +691,29 @@ fig.text(
 	va='bottom'
 )
 plt.tight_layout(rect=(0.0, 0.06, 0.96, 1.0))
-plt.savefig('output/spatial_and_raster_all_layers.png', dpi=300)
+plt.savefig('output/public/spatial_and_raster_all_layers.png', dpi=300)
 
-Path('output').mkdir(parents=True, exist_ok=True)
+Path('output/public').mkdir(parents=True, exist_ok=True)
 plot_multilayer_3d_structure(
     layers,
     interlayer_synapses,
-    output_path='output/spatial_structure_3d_columns.png',
+    output_path='output/public/spatial_structure_3d_columns.png',
 )
 
 plot_uniform_layer_proxy_columns(
     layers,
-    output_path='output/uniform_layer_proxy_columns.png',
+    output_path='output/public/uniform_layer_proxy_columns.png',
     uniform_start_idx=uniform_layer_start,
 )
 
 plot_structured_and_uniform_proxy_pair(
     layers,
-    output_path='output/structured_vs_uniform_proxy_pair.png',
+    output_path='output/public/structured_vs_uniform_proxy_pair.png',
     uniform_start_idx=uniform_layer_start,
 )
 
-print('Saved: output/spatial_structure_3d_columns.png')
-print('Saved: output/uniform_layer_proxy_columns.png')
-print('Saved: output/structured_vs_uniform_proxy_pair.png')
+print('Saved: output/public/spatial_structure_3d_columns.png')
+print('Saved: output/public/uniform_layer_proxy_columns.png')
+print('Saved: output/public/structured_vs_uniform_proxy_pair.png')
 plt.show()
 
