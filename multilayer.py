@@ -50,7 +50,7 @@ y: meter
 """
 
 N_layers = 5
-uniform_layer_start = N_layers - 3
+uniform_layer_start = N_layers - 1
 
 p_avg=0.02
 
@@ -64,7 +64,6 @@ def assign_nearest_centroid_ids(positions_um, centroids):
 
 R_ee = 1.5
 interlayer_decay_l = 30 * um
-inhibitory_sigma = R / 2
 num_exc_per_layer = N_exc_c * 5  # Number of excitatory neurons per layer
 uniform_radius = (R + 2 * sigma_c) / um  # Ensure neurons are within a reasonable distance from the center
 
