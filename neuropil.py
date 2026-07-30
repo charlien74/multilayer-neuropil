@@ -53,12 +53,45 @@ def load_raw_voltage_bundle(npz_path='output/internal/lower_layer_voltage_raw.np
 		}
 
 
-def build_radius_neighborhood_matrix(lower_positions_um, readout_positions_um, radius_um):
-	"""Create a CSR matrix mapping readout neurons to lower-layer neighbors."""
+def build_radius_neighborhood_matrix(
+	lower_positions_um,
+	readout_positions_um,
+	radius_um,
+	lower_layer_indices=None,
+	layer_weight_decay_lambda=1.0
+):
+	"""Create a CSR matrix mapping readout neurons to lower-layer neighbors.
+
+	When ``lower_layer_indices`` is provided, each flattened neighbor has an
+	associated source-layer index available for layer-dependent weighting.
+
+	Weights are exponential in source-layer distance from the closest lower layer
+	to readout (largest layer index):
+		w ~ exp(-lambda * (max_layer - source_layer)).
+	"""
 	if radius_um <= 0:
 		raise ValueError('radius_um must be positive.')
 
-	lower_flat = np.asarray(lower_positions_um, dtype=np.float32).reshape(-1, 2)
+	lower_positions = np.asarray(lower_positions_um, dtype=np.float32)
+	if lower_positions.ndim != 3 or lower_positions.shape[2] != 2:
+		raise ValueError('lower_positions_um must have shape (n_layers, n_neurons, 2).')
+
+	n_lower_layers = int(lower_positions.shape[0])
+	n_lower_per_layer = int(lower_positions.shape[1])
+
+	if lower_layer_indices is None:
+		flat_lower_layer_ids = np.repeat(np.arange(n_lower_layers, dtype=np.int32), n_lower_per_layer)
+	else:
+		lower_layer_indices = np.asarray(lower_layer_indices, dtype=np.int32)
+		if lower_layer_indices.shape[0] != n_lower_layers:
+			raise ValueError(
+				'lower_layer_indices length must match lower_positions_um first dimension.'
+			)
+		flat_lower_layer_ids = np.repeat(lower_layer_indices, n_lower_per_layer)
+
+	max_layer_index = float(np.max(flat_lower_layer_ids))
+
+	lower_flat = lower_positions.reshape(-1, 2)
 	readout = np.asarray(readout_positions_um, dtype=np.float32)
 	radius_sq = float(radius_um) * float(radius_um)
 
@@ -72,14 +105,19 @@ def build_radius_neighborhood_matrix(lower_positions_um, readout_positions_um, r
 		if in_radius.size == 0:
 			continue
 
-        # TODO: Consider if we want weight to take into account the number of 
-		# neighbors, or if it should be independent, or just a function of
-        # layer. In the case of uniformly distributed neurons, it shouldn't 
-		# matter much.
-		weight = np.float32(0.5)
+		# Exponential decay by source-layer distance from readout-adjacent layer.
+		neighbor_source_layers = flat_lower_layer_ids[in_radius].astype(np.float32)
+		neighbor_layer_distance = max_layer_index - neighbor_source_layers
+		neighbor_weights = np.exp(-float(layer_weight_decay_lambda) * neighbor_layer_distance)
+		neighbor_weights_sum = float(np.sum(neighbor_weights))
+		if neighbor_weights_sum <= 0.0:
+			neighbor_weights = np.full(in_radius.size, 1.0 / float(in_radius.size), dtype=np.float32)
+		else:
+			neighbor_weights = 100 * (neighbor_weights / neighbor_weights_sum).astype(np.float32)
+
 		rows.extend([readout_idx] * int(in_radius.size))
 		cols.extend(in_radius.tolist())
-		data.extend([weight] * int(in_radius.size))
+		data.extend(neighbor_weights.tolist())
 
 	n_readout = readout.shape[0]
 	n_lower_total = lower_flat.shape[0]
@@ -95,8 +133,49 @@ def compute_readout_tensor(voltage_lower_exc, neighborhood_csr):
 	return np.asarray(readout_by_time.T, dtype=np.float32)
 
 
+def summarize_layer_contributions(neighborhood_csr, lower_layer_indices, n_lower_per_layer):
+	"""Summarize how much neighborhood weight mass lands on each source layer."""
+	if n_lower_per_layer <= 0:
+		raise ValueError('n_lower_per_layer must be positive.')
+
+	lower_layer_indices = np.asarray(lower_layer_indices, dtype=np.int32)
+	if lower_layer_indices.ndim != 1:
+		raise ValueError('lower_layer_indices must be a 1D array.')
+
+	flat_layer_ids = np.repeat(lower_layer_indices, int(n_lower_per_layer))
+	if flat_layer_ids.shape[0] != neighborhood_csr.shape[1]:
+		raise ValueError(
+			'Flattened layer IDs length does not match neighborhood matrix column count.'
+		)
+
+	weights_per_input = np.asarray(neighborhood_csr.sum(axis=0)).ravel().astype(np.float64)
+	total_mass = float(np.sum(weights_per_input))
+
+	rows_with_neighbors = np.diff(neighborhood_csr.indptr) > 0
+	row_count = int(neighborhood_csr.shape[0])
+	n_rows_with_neighbors = int(np.sum(rows_with_neighbors))
+
+	layer_totals = {}
+	for layer_id in np.unique(flat_layer_ids):
+		mask = flat_layer_ids == layer_id
+		mass = float(np.sum(weights_per_input[mask]))
+		fraction = (mass / total_mass) if total_mass > 0 else np.nan
+		layer_totals[int(layer_id)] = {
+			'mass': mass,
+			'fraction': fraction,
+		}
+
+	return {
+		'row_count': row_count,
+		'rows_with_neighbors': n_rows_with_neighbors,
+		'total_mass': total_mass,
+		'layer_totals': layer_totals,
+	}
+
+
 def generate_readout_tensor_from_file(
 	radius_um,
+	layer_weight_decay_lambda=1.0,
 	input_npz='output/internal/lower_layer_voltage_raw.npz',
 	output_npz='output/internal/readout_avg_radius.npz',
 	neighborhood_npz='output/internal/readout_neighborhood_radius.npz',
@@ -107,6 +186,8 @@ def generate_readout_tensor_from_file(
 		bundle['lower_positions_um'],
 		bundle['readout_positions_um'],
 		radius_um=radius_um,
+		lower_layer_indices=bundle['lower_layer_indices'],
+		layer_weight_decay_lambda=layer_weight_decay_lambda,
 	)
 	readout_tensor = compute_readout_tensor(bundle['voltage_lower_exc'], neighborhood)
 
@@ -117,6 +198,7 @@ def generate_readout_tensor_from_file(
 		readout_avg=readout_tensor,
 		time_ms=bundle['time_ms'],
 		radius_um=np.float32(radius_um),
+		layer_weight_decay_lambda=np.float32(layer_weight_decay_lambda),
 	)
 	return bundle, readout_tensor, neighborhood
 
@@ -515,8 +597,11 @@ def save_readout_simulation_outputs(
 	)
 
 
-def main(radius_um=10.0):
-	bundle, readout_tensor, neighborhood = generate_readout_tensor_from_file(radius_um=radius_um)
+def main(radius_um=10.0, layer_weight_decay_lambda=1.0):
+	bundle, readout_tensor, neighborhood = generate_readout_tensor_from_file(
+		radius_um=radius_um,
+		layer_weight_decay_lambda=layer_weight_decay_lambda,
+	)
 	result = build_uniform_readout_layer(bundle, readout_tensor)
 	save_readout_simulation_outputs(result, readout_tensor, bundle, radius_um)
 	plot_proxy_column_raster(
@@ -532,12 +617,33 @@ def main(radius_um=10.0):
 	)
 
 	neighbor_counts = np.diff(neighborhood.indptr)
+	lower_layer_indices = np.asarray(bundle['lower_layer_indices'], dtype=np.int32)
+	n_lower_per_layer = int(np.asarray(bundle['lower_positions_um']).shape[1])
+	layer_summary = summarize_layer_contributions(
+		neighborhood,
+		lower_layer_indices=lower_layer_indices,
+		n_lower_per_layer=n_lower_per_layer,
+	)
+
 	print(f'Loaded raw bundle with lower voltages shape {bundle["voltage_lower_exc"].shape}.')
 	print(f'Computed readout tensor with shape {readout_tensor.shape}.')
+	print(f'Layer-weight decay lambda: {layer_weight_decay_lambda:.4f}')
 	print(
 		'Readout neighborhood counts: '
 		f'min={neighbor_counts.min()}, mean={neighbor_counts.mean():.1f}, max={neighbor_counts.max()}'
 	)
+	print(
+		'Neighborhood coverage: '
+		f"rows_with_neighbors={layer_summary['rows_with_neighbors']}/{layer_summary['row_count']}, "
+		f"total_weight_mass={layer_summary['total_mass']:.3f}"
+	)
+	for layer_id in sorted(layer_summary['layer_totals']):
+		layer_mass = layer_summary['layer_totals'][layer_id]['mass']
+		layer_fraction = layer_summary['layer_totals'][layer_id]['fraction']
+		print(
+			f"  Source layer {layer_id}: mass={layer_mass:.6f}, "
+			f"fraction={layer_fraction:.6f}"
+		)
 	print(
 		'Readout-layer spikes: '
 		f"E={result['spike_mon_exc'].num_spikes}, I={result['spike_mon_inh'].num_spikes}"
@@ -549,5 +655,14 @@ def main(radius_um=10.0):
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='Generate neuropil readout drive and simulate a readout layer.')
 	parser.add_argument('--radius-um', type=float, default=25.0, help='Neighborhood radius in micrometers.')
+	parser.add_argument(
+		'--layer-weight-decay-lambda',
+		type=float,
+		default=1.0,
+		help='Exponential decay rate by source-layer distance (larger => stronger preference for readout-adjacent lower layers).',
+	)
 	args = parser.parse_args()
-	main(radius_um=args.radius_um)
+	main(
+		radius_um=args.radius_um,
+		layer_weight_decay_lambda=args.layer_weight_decay_lambda,
+	)
