@@ -76,7 +76,7 @@ def build_radius_neighborhood_matrix(lower_positions_um, readout_positions_um, r
 		# neighbors, or if it should be independent, or just a function of
         # layer. In the case of uniformly distributed neurons, it shouldn't 
 		# matter much.
-		weight = np.float32(1.0 / in_radius.size) * 100
+		weight = np.float32(0.5)
 		rows.extend([readout_idx] * int(in_radius.size))
 		cols.extend(in_radius.tolist())
 		data.extend([weight] * int(in_radius.size))
@@ -129,46 +129,136 @@ def assign_nearest_centroid_ids(positions_um, centroids):
 	return np.argmin(dist2, axis=1).astype(np.int32)
 
 
-def plot_proxy_column_raster(result, proxy_column_ids, output_path='output/public/neuropil_readout_raster.png'):
-	"""Save a spike raster with excitatory rows grouped by proxy column."""
+def plot_proxy_column_raster(
+	result,
+	proxy_column_ids,
+	readout_positions_um=None,
+	readout_tensor=None,
+	time_ms=None,
+	output_path='output/public/neuropil_readout_raster.png',
+):
+	"""Save a spike raster with an optional lower-layer activation heatmap."""
 	import matplotlib.pyplot as plt
+	from matplotlib.colors import LinearSegmentedColormap
 
 	proxy_column_ids = np.asarray(proxy_column_ids, dtype=np.int32)
 	n_exc = proxy_column_ids.size
+	positions_um = None if readout_positions_um is None else np.asarray(readout_positions_um, dtype=np.float32)
 	exc_sort_order = np.argsort(proxy_column_ids, kind='stable')
 	exc_row_map = np.empty(n_exc, dtype=np.int32)
 	exc_row_map[exc_sort_order] = np.arange(n_exc, dtype=np.int32)
+	sorted_ids = proxy_column_ids[exc_sort_order]
+	unique_ids, counts = np.unique(sorted_ids, return_counts=True)
+	cmap = plt.get_cmap('tab10')
 
 	exc_spike_i = np.asarray(result['spike_mon_exc'].i[:], dtype=np.int32)
 	exc_spike_t_ms = np.asarray(result['spike_mon_exc'].t[:] / ms, dtype=np.float32)
 	inh_spike_i = np.asarray(result['spike_mon_inh'].i[:], dtype=np.int32)
 	inh_spike_t_ms = np.asarray(result['spike_mon_inh'].t[:] / ms, dtype=np.float32)
 	exc_spike_rows = exc_row_map[exc_spike_i]
+	exc_spike_cluster_ids = proxy_column_ids[exc_spike_i]
+	exc_spike_colors = cmap(exc_spike_cluster_ids % 10)
 
-	fig, ax = plt.subplots(figsize=(12, 8))
-	ax.scatter(exc_spike_t_ms, exc_spike_rows, s=2, c='tab:red', alpha=0.7, label='Excitatory')
+	if readout_tensor is not None:
+		if time_ms is None:
+			raise ValueError('time_ms is required when readout_tensor is provided.')
+		time_ms = np.asarray(time_ms, dtype=np.float32)
+		if time_ms.shape[0] != np.asarray(readout_tensor).shape[0]:
+			raise ValueError('time_ms and readout_tensor must have the same number of time samples.')
+		if positions_um is not None:
+			fig = plt.figure(figsize=(15.5, 11.0))
+			gs = fig.add_gridspec(
+				2,
+				2,
+				width_ratios=[3.3, 1.6],
+				height_ratios=[1, 2],
+				wspace=0.28,
+				hspace=0.12,
+			)
+			ax_heat = fig.add_subplot(gs[0, 0])
+			ax = fig.add_subplot(gs[1, 0], sharex=ax_heat)
+			ax_spatial = fig.add_subplot(gs[:, 1])
+		else:
+			fig, (ax_heat, ax) = plt.subplots(
+				2,
+				1,
+				figsize=(12, 11),
+				sharex=True,
+				gridspec_kw={'height_ratios': [1, 2]},
+			)
+			ax_spatial = None
+		activation = np.asarray(readout_tensor, dtype=np.float32)[:, exc_sort_order].T
+		activation = np.clip(activation, 0.0, None)
+		max_activation = float(np.max(activation))
+		if max_activation > 0.0:
+			activation = activation / max_activation
+		activation_cmap = LinearSegmentedColormap.from_list('white_dark_red', ['#ffffff', '#8b0000'])
+		im = ax_heat.imshow(
+			activation,
+			aspect='auto',
+			origin='lower',
+			interpolation='nearest',
+			extent=[float(time_ms[0]), float(time_ms[-1]), 0.0, float(n_exc)],
+			cmap=activation_cmap,
+			vmin=0.0,
+			vmax=1.0,
+		)
+		ax_heat.set_ylabel('Neuron index')
+		ax_heat.set_title('Lower-layer activation received by readout neurons from avg. field')
+		ax_heat.set_ylim(0.0, float(n_exc))
+		ax_heat.set_yticks([])
+
+		y_cursor = 0
+		for cluster_idx, count in zip(unique_ids, counts):
+			y_start = y_cursor
+			y_end = y_cursor + int(count)
+			band_color = cmap(int(cluster_idx) % 10)
+			ax_heat.axhline(y_start, color=band_color, linewidth=0.6, alpha=0.75)
+			ax_heat.text(
+				1.01,
+				0.5 * (y_start + y_end),
+				f'C{int(cluster_idx)}',
+				transform=ax_heat.get_yaxis_transform(),
+				fontsize=8,
+				color=band_color,
+				ha='left',
+				va='center',
+				clip_on=False,
+			)
+			y_cursor = y_end
+		fig.colorbar(im, ax=ax_heat, pad=0.01, fraction=0.04, label='Normalized activation')
+	else:
+		if positions_um is not None:
+			fig, (ax, ax_spatial) = plt.subplots(
+				1,
+				2,
+				figsize=(15.5, 8.0),
+				gridspec_kw={'width_ratios': [3.1, 1.7]},
+			)
+		else:
+			fig, ax = plt.subplots(figsize=(12, 8))
+			ax_spatial = None
+
+	ax.scatter(exc_spike_t_ms, exc_spike_rows, s=2, c=exc_spike_colors, alpha=0.7, label='Excitatory')
 	ax.scatter(inh_spike_t_ms, n_exc + inh_spike_i, s=2, c='tab:blue', alpha=0.7, label='Inhibitory')
 	ax.set_xlabel('Time (ms)')
 	ax.set_ylabel('Neuron index')
 	ax.set_title('Neuropil readout layer: spike raster by proxy column')
 	ax.legend(loc='upper right', markerscale=3)
 
-	sorted_ids = proxy_column_ids[exc_sort_order]
-	unique_ids, counts = np.unique(sorted_ids, return_counts=True)
 	y_cursor = 0
 	for block_idx, (cluster_idx, count) in enumerate(zip(unique_ids, counts)):
 		y_start = y_cursor
 		y_end = y_cursor + int(count)
 		y_center = 0.5 * (y_start + y_end - 1)
-		if block_idx % 2 == 0:
-			ax.axhspan(y_start, y_end, color='gray', alpha=0.04)
+		band_color = cmap(int(cluster_idx) % 10)
 		ax.text(
 			1.02,
 			y_center,
 			f'C{int(cluster_idx)}',
 			transform=ax.get_yaxis_transform(),
 			fontsize=8,
-			color='black',
+			color=band_color,
 			ha='left',
 			va='center',
 			clip_on=False,
@@ -181,8 +271,101 @@ def plot_proxy_column_raster(result, proxy_column_ids, output_path='output/publi
 	ax.set_xlim(0.0, float(duration / ms))
 	ax.set_ylim(-1, n_exc + N_inh + 1)
 
+	if ax_spatial is not None:
+		for cluster_idx in np.unique(proxy_column_ids):
+			mask = proxy_column_ids == cluster_idx
+			color = cmap(int(cluster_idx) % 10)
+			ax_spatial.scatter(
+				positions_um[mask, 0],
+				positions_um[mask, 1],
+				s=12,
+				alpha=0.75,
+				color=color,
+				edgecolors='none',
+				label=f'C{int(cluster_idx)}',
+			)
+			if np.any(mask):
+				mx = float(np.mean(positions_um[mask, 0]))
+				my = float(np.mean(positions_um[mask, 1]))
+				ax_spatial.text(mx, my, f'C{int(cluster_idx)}', fontsize=9, color='black', ha='center', va='center')
+
+		ax_spatial.set_aspect('equal', adjustable='box')
+		ax_spatial.set_xlabel('x (um)')
+		ax_spatial.set_ylabel('y (um)')
+		ax_spatial.set_title('Readout spatial layout (proxy-column colors)')
+		ax_spatial.grid(alpha=0.2)
+		ax_spatial.legend(loc='upper right', fontsize=8)
+
 	Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 	fig.tight_layout(rect=(0.0, 0.0, 0.96, 1.0))
+	fig.savefig(output_path, dpi=300)
+	plt.close(fig)
+
+
+def plot_proxy_column_spatial_band_mapping(
+	proxy_column_ids,
+	readout_positions_um,
+	output_path='output/public/neuropil_proxy_column_mapping.png',
+):
+	"""Plot explicit spatial-to-raster-band mapping for the readout proxy columns."""
+	proxy_column_ids = np.asarray(proxy_column_ids, dtype=np.int32)
+	positions_um = np.asarray(readout_positions_um, dtype=np.float32)
+	n_exc = int(proxy_column_ids.size)
+
+	exc_sort_order = np.argsort(proxy_column_ids, kind='stable')
+	sorted_ids = proxy_column_ids[exc_sort_order]
+	unique_ids, counts = np.unique(sorted_ids, return_counts=True)
+	cmap = plt.get_cmap('tab10')
+
+	fig, (ax_spatial, ax_bands) = plt.subplots(
+		1,
+		2,
+		figsize=(13, 5.5),
+		gridspec_kw={'width_ratios': [1.2, 0.8]},
+		constrained_layout=True,
+	)
+
+	for cluster_idx in np.unique(proxy_column_ids):
+		mask = proxy_column_ids == cluster_idx
+		color = cmap(int(cluster_idx) % 10)
+		ax_spatial.scatter(
+			positions_um[mask, 0],
+			positions_um[mask, 1],
+			s=12,
+			alpha=0.72,
+			color=color,
+			edgecolors='none',
+			label=f'C{int(cluster_idx)}',
+		)
+		if np.any(mask):
+			mx = float(np.mean(positions_um[mask, 0]))
+			my = float(np.mean(positions_um[mask, 1]))
+			ax_spatial.text(mx, my, f'C{int(cluster_idx)}', fontsize=9, color='black', ha='center', va='center')
+
+	ax_spatial.set_aspect('equal', adjustable='box')
+	ax_spatial.set_xlabel('x (um)')
+	ax_spatial.set_ylabel('y (um)')
+	ax_spatial.set_title('Readout layer: proxy-column spatial regions')
+	ax_spatial.grid(alpha=0.2)
+	ax_spatial.legend(loc='upper right', fontsize=8)
+
+	y_cursor = 0
+	for cluster_idx, count in zip(unique_ids, counts):
+		y_start = y_cursor
+		y_end = y_cursor + int(count)
+		color = cmap(int(cluster_idx) % 10)
+		ax_bands.axhspan(y_start, y_end, color=color, alpha=0.25)
+		ax_bands.text(0.5, 0.5 * (y_start + y_end), f'C{int(cluster_idx)}', ha='center', va='center', fontsize=10)
+		ax_bands.axhline(y_start, color='black', linewidth=0.4, alpha=0.35)
+		y_cursor = y_end
+	ax_bands.axhline(n_exc, color='black', linewidth=0.6, alpha=0.6)
+	ax_bands.set_xlim(0.0, 1.0)
+	ax_bands.set_xticks([])
+	ax_bands.set_ylim(0.0, float(n_exc))
+	ax_bands.set_ylabel('Sorted excitatory row index')
+	ax_bands.set_title('Raster band order (sorted by proxy column)')
+
+	Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 	fig.savefig(output_path, dpi=300)
 	plt.close(fig)
 
@@ -332,11 +515,21 @@ def save_readout_simulation_outputs(
 	)
 
 
-def main(radius_um=25.0):
+def main(radius_um=10.0):
 	bundle, readout_tensor, neighborhood = generate_readout_tensor_from_file(radius_um=radius_um)
 	result = build_uniform_readout_layer(bundle, readout_tensor)
 	save_readout_simulation_outputs(result, readout_tensor, bundle, radius_um)
-	plot_proxy_column_raster(result, result['proxy_column_ids'])
+	plot_proxy_column_raster(
+		result,
+		result['proxy_column_ids'],
+		readout_positions_um=bundle['readout_positions_um'],
+		readout_tensor=readout_tensor,
+		time_ms=bundle['time_ms'],
+	)
+	plot_proxy_column_spatial_band_mapping(
+		result['proxy_column_ids'],
+		bundle['readout_positions_um'],
+	)
 
 	neighbor_counts = np.diff(neighborhood.indptr)
 	print(f'Loaded raw bundle with lower voltages shape {bundle["voltage_lower_exc"].shape}.')
@@ -350,6 +543,7 @@ def main(radius_um=25.0):
 		f"E={result['spike_mon_exc'].num_spikes}, I={result['spike_mon_inh'].num_spikes}"
 	)
 	print('Saved: output/public/neuropil_readout_raster.png')
+	print('Saved: output/public/neuropil_proxy_column_mapping.png')
 
 
 if __name__ == '__main__':

@@ -35,6 +35,25 @@ Using a neuronal model consisting of multiple layers to explore neuropil dynamic
 	 python multilayer.py
 	 ```
 
+To save all figures without opening plot windows:
+
+	 ```bash
+	 python multilayer.py --no-show
+	 ```
+
+To regenerate multilayer outputs and then run neuropil using the freshly written
+`output/internal/lower_layer_voltage_raw.npz` bundle:
+
+	 ```bash
+	 python regenerate_all_figures.py
+	 ```
+
+You can override neuropil neighborhood radius for this batch run:
+
+	 ```bash
+	 python regenerate_all_figures.py --radius-um 25
+	 ```
+
 ### What the script does at runtime
 
 - Initializes model parameters and random seed.

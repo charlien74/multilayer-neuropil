@@ -1,4 +1,5 @@
 from brian2 import *
+import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle
@@ -11,6 +12,10 @@ from spectral_analysis import (
     plot_complex_spectrum,
     plot_layer_ee_spectra,
 )
+
+parser = argparse.ArgumentParser(description='Run multilayer simulation and generate figures.')
+parser.add_argument('--no-show', action='store_true', help='Save figures without opening interactive windows.')
+args = parser.parse_args()
 
 start_scope()
 seed(RANDOM_SEED)
@@ -62,7 +67,7 @@ def assign_nearest_centroid_ids(positions_um, centroids):
     dist2 = np.sum(diffs * diffs, axis=2)
     return np.argmin(dist2, axis=1).astype(int)
 
-R_ee = 1.5
+R_ee = 2.0
 interlayer_decay_l = 30 * um
 num_exc_per_layer = N_exc_c * 5  # Number of excitatory neurons per layer
 uniform_radius = (R + 2 * sigma_c) / um  # Ensure neurons are within a reasonable distance from the center
@@ -624,6 +629,85 @@ def plot_structured_and_uniform_proxy_pair(layers, output_path, uniform_start_id
     fig.savefig(output_path, dpi=300)
     return fig
 
+
+def plot_uniform_proxy_band_mapping(layers, output_path, uniform_start_idx):
+    """Plot explicit mapping between readout proxy-column bands and spatial regions."""
+    uniform_idx = uniform_start_idx
+    if uniform_idx < 0 or uniform_idx >= len(layers):
+        print("Could not determine uniform layer for band mapping; skipping figure.")
+        return None
+
+    layer = layers[uniform_idx]
+    positions_um = np.asarray(layer['positions_um'], dtype=float)
+    cluster_ids = np.asarray(layer['cluster_ids'], dtype=int)
+    n_exc = int(cluster_ids.size)
+
+    exc_sort_order = np.argsort(cluster_ids, kind='stable')
+    sorted_ids = cluster_ids[exc_sort_order]
+    unique_ids, counts = np.unique(sorted_ids, return_counts=True)
+
+    fig, axes = plt.subplots(
+        1,
+        2,
+        figsize=(13, 5.5),
+        gridspec_kw={'width_ratios': [1.2, 0.8]},
+        constrained_layout=True,
+    )
+    ax_spatial, ax_bands = axes
+    cmap = plt.get_cmap('tab10')
+
+    for c in np.unique(cluster_ids):
+        mask = cluster_ids == c
+        color = cmap(int(c) % 10)
+        ax_spatial.scatter(
+            positions_um[mask, 0],
+            positions_um[mask, 1],
+            s=12,
+            alpha=0.72,
+            color=color,
+            edgecolors='none',
+            label=f'C{int(c)}',
+        )
+        if np.any(mask):
+            mx = float(np.mean(positions_um[mask, 0]))
+            my = float(np.mean(positions_um[mask, 1]))
+            ax_spatial.text(mx, my, f'C{int(c)}', fontsize=9, color='black', ha='center', va='center')
+
+    ax_spatial.set_aspect('equal', adjustable='box')
+    ax_spatial.set_xlabel('x (um)')
+    ax_spatial.set_ylabel('y (um)')
+    ax_spatial.set_title(f'Uniform layer {uniform_idx}: proxy-column spatial regions')
+    ax_spatial.grid(alpha=0.2)
+    ax_spatial.legend(loc='upper right', fontsize=8, ncol=1)
+
+    y_cursor = 0
+    for c, count in zip(unique_ids, counts):
+        y_start = y_cursor
+        y_end = y_cursor + int(count)
+        color = cmap(int(c) % 10)
+        ax_bands.axhspan(y_start, y_end, color=color, alpha=0.25)
+        ax_bands.text(
+            0.5,
+            0.5 * (y_start + y_end),
+            f'C{int(c)}',
+            ha='center',
+            va='center',
+            fontsize=10,
+            color='black',
+        )
+        ax_bands.axhline(y_start, color='black', linewidth=0.4, alpha=0.35)
+        y_cursor = y_end
+    ax_bands.axhline(n_exc, color='black', linewidth=0.6, alpha=0.6)
+    ax_bands.set_xlim(0.0, 1.0)
+    ax_bands.set_xticks([])
+    ax_bands.set_ylim(0.0, float(n_exc))
+    ax_bands.set_ylabel('Sorted excitatory row index')
+    ax_bands.set_title('Raster band order (sorted by proxy column)')
+
+    fig.savefig(output_path, dpi=300)
+    plt.close(fig)
+    return fig
+
 # Plot all layers: one row per layer, spatial in col 1 and raster in col 2.
 fig, axes = plt.subplots(N_layers, 2, figsize=(16, 5 * N_layers), squeeze=False)
 duration_ms = float(duration / ms)
@@ -632,6 +716,7 @@ for layer_i in range(N_layers):
     layer = layers[layer_i]
     ax_spatial = axes[layer_i, 0]
     ax_raster = axes[layer_i, 1]
+    cmap = plt.get_cmap('tab10')
 
     layer_positions_um = layer['positions_um']
     exc_cluster_ids = np.asarray(layer['cluster_ids'], dtype=int)
@@ -641,7 +726,16 @@ for layer_i in range(N_layers):
     inh_x = np.array(inh_neurons.x / um)
     inh_y = np.array(inh_neurons.y / um)
     ax_spatial.scatter(inh_x, inh_y, s=8, c='tab:blue', alpha=0.2)
-    ax_spatial.scatter(layer_positions_um[:, 0], layer_positions_um[:, 1], s=8, c='tab:red', alpha=0.85)
+    for c in np.unique(exc_cluster_ids):
+        mask = exc_cluster_ids == c
+        ax_spatial.scatter(
+            layer_positions_um[mask, 0],
+            layer_positions_um[mask, 1],
+            s=8,
+            color=cmap(int(c) % 10),
+            alpha=0.8,
+            edgecolors='none',
+        )
 
     layer_centroids = layer['centroids']
     if layer_centroids is not None:
@@ -666,13 +760,16 @@ for layer_i in range(N_layers):
     exc_sort_order = np.argsort(exc_cluster_ids, kind='stable')
     exc_row_map = np.empty(n_exc_layer, dtype=int)
     exc_row_map[exc_sort_order] = np.arange(n_exc_layer)
-    exc_spike_rows = exc_row_map[np.asarray(layer_spike_mon_exc.i[:], dtype=int)]
+    exc_spike_i = np.asarray(layer_spike_mon_exc.i[:], dtype=int)
+    exc_spike_rows = exc_row_map[exc_spike_i]
+    exc_spike_cluster_ids = exc_cluster_ids[exc_spike_i]
+    exc_spike_colors = cmap(exc_spike_cluster_ids % 10)
 
     ax_raster.scatter(
         layer_spike_mon_exc.t / ms,
         exc_spike_rows,
         s=2,
-        c='tab:red',
+        c=exc_spike_colors,
         alpha=0.7,
         label='Excitatory'
     )
@@ -698,8 +795,7 @@ for layer_i in range(N_layers):
         y_start = y_cursor
         y_end = y_cursor + int(count)
         y_center = 0.5 * (y_start + y_end - 1)
-        if block_idx % 2 == 0:
-            ax_raster.axhspan(y_start, y_end, color='gray', alpha=0.04)
+        band_color = cmap(int(cluster_idx) % 10)
         # ax_raster.axhline(y_start, color='gray', linewidth=0.4, alpha=0.5)
         ax_raster.text(
             1.02,
@@ -707,7 +803,7 @@ for layer_i in range(N_layers):
             f'C{int(cluster_idx)}',
             transform=ax_raster.get_yaxis_transform(),
             fontsize=8,
-            color='black',
+            color=band_color,
             ha='left',
             va='center',
             clip_on=False,
@@ -754,8 +850,18 @@ plot_structured_and_uniform_proxy_pair(
     uniform_start_idx=uniform_layer_start,
 )
 
+plot_uniform_proxy_band_mapping(
+    layers,
+    output_path='output/public/uniform_proxy_band_mapping.png',
+    uniform_start_idx=uniform_layer_start,
+)
+
 print('Saved: output/public/spatial_structure_3d_columns.png')
 print('Saved: output/public/uniform_layer_proxy_columns.png')
 print('Saved: output/public/structured_vs_uniform_proxy_pair.png')
-plt.show()
+print('Saved: output/public/uniform_proxy_band_mapping.png')
+if args.no_show:
+    plt.close('all')
+else:
+    plt.show()
 
