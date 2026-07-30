@@ -9,7 +9,7 @@ def run_step(cmd, label):
     subprocess.run(cmd, check=True)
 
 
-def main(radius_um, layer_weight_decay_lambda):
+def main(radius_um, layer_weight_decay_lambda, summary_signal):
     repo_root = Path(__file__).resolve().parent
     python_exec = sys.executable
 
@@ -17,7 +17,16 @@ def main(radius_um, layer_weight_decay_lambda):
     print(f"Repository root: {repo_root}")
     print("Regenerating all figures with fresh multilayer internal data...")
 
-    run_step([python_exec, str(repo_root / 'multilayer.py'), '--no-show'], '1/2 multilayer')
+    run_step(
+        [
+            python_exec,
+            str(repo_root / 'multilayer.py'),
+            '--no-show',
+            '--summary-signal',
+            summary_signal,
+        ],
+        '1/2 multilayer',
+    )
     run_step(
         [
             python_exec,
@@ -50,8 +59,15 @@ if __name__ == '__main__':
         default=1.0,
         help='Exponential decay rate for source-layer weighting in neuropil.py.',
     )
+    parser.add_argument(
+        '--summary-signal',
+        choices=['v', 'i_syn', 'g_e'],
+        default='v',
+        help='Signal exported by multilayer.py for neuropil readout construction.',
+    )
     args = parser.parse_args()
     main(
         radius_um=args.radius_um,
         layer_weight_decay_lambda=args.layer_weight_decay_lambda,
+        summary_signal=args.summary_signal,
     )

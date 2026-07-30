@@ -15,6 +15,12 @@ from spectral_analysis import (
 
 parser = argparse.ArgumentParser(description='Run multilayer simulation and generate figures.')
 parser.add_argument('--no-show', action='store_true', help='Save figures without opening interactive windows.')
+parser.add_argument(
+    '--summary-signal',
+    choices=['v', 'i_syn', 'g_e'],
+    default='v',
+    help='Signal exported for downstream neuropil readout construction.',
+)
 args = parser.parse_args()
 
 start_scope()
@@ -200,10 +206,16 @@ for layer_i in range(N_layers - 1):
 spike_mon_exc = [SpikeMonitor(layer['exc_neurons']) for layer in layers]
 spike_mon_inh = [SpikeMonitor(layer['inh_neurons']) for layer in layers]
 
-# Record raw excitatory voltage traces for all non-readout layers.
+# Record lower-layer excitatory state traces for downstream readout signal export.
 lower_layer_indices = list(range(N_layers - 1))
+if args.summary_signal == 'v':
+    state_monitor_vars = 'v'
+elif args.summary_signal == 'g_e':
+    state_monitor_vars = 'g_e'
+else:
+    state_monitor_vars = ['g_e', 'g_i']
 state_mon_exc_lower = [
-    StateMonitor(layers[layer_i]['exc_neurons'], 'v', record=True)
+    StateMonitor(layers[layer_i]['exc_neurons'], state_monitor_vars, record=True)
     for layer_i in lower_layer_indices
 ]
 
@@ -231,20 +243,26 @@ net_objects.extend(state_mon_exc_lower)
 
 Network(net_objects).run(duration)
 
-# Persist raw lower-layer voltages and geometry for downstream readout processing.
+# Persist lower-layer summary signal and geometry for downstream readout processing.
 expected_samples = int(np.round(float(duration / defaultclock.dt)))
-voltage_blocks = []
+summary_blocks = []
 for monitor in state_mon_exc_lower:
-    v_block = np.asarray(monitor.v[:], dtype=np.float32)
-    if v_block.shape[1] > expected_samples:
-        v_block = v_block[:, :expected_samples]
-    elif v_block.shape[1] < expected_samples:
-        raise RuntimeError(
-            f"StateMonitor produced {v_block.shape[1]} samples, expected at least {expected_samples}."
-        )
-    voltage_blocks.append(v_block)
+    if args.summary_signal == 'v':
+        signal_block = np.asarray(monitor.v[:], dtype=np.float32)
+    elif args.summary_signal == 'g_e':
+        signal_block = np.asarray(monitor.g_e[:] / Hz, dtype=np.float32)
+    else:
+        signal_block = np.asarray((monitor.g_e[:] + monitor.g_i[:]) / Hz, dtype=np.float32)
 
-voltage_tensor = np.stack(voltage_blocks, axis=0)
+    if signal_block.shape[1] > expected_samples:
+        signal_block = signal_block[:, :expected_samples]
+    elif signal_block.shape[1] < expected_samples:
+        raise RuntimeError(
+            f"StateMonitor produced {signal_block.shape[1]} samples, expected at least {expected_samples}."
+        )
+    summary_blocks.append(signal_block)
+
+summary_tensor = np.stack(summary_blocks, axis=0)
 lower_positions_um = np.stack(
     [np.asarray(layers[layer_i]['positions_um'], dtype=np.float32) for layer_i in lower_layer_indices],
     axis=0,
@@ -257,12 +275,14 @@ if time_ms.shape[0] > expected_samples:
 Path('output/internal').mkdir(parents=True, exist_ok=True)
 np.savez_compressed(
     'output/internal/lower_layer_voltage_raw.npz',
-    voltage_lower_exc=voltage_tensor,
+    voltage_lower_exc=summary_tensor,
+    summary_signal=np.asarray(args.summary_signal),
     time_ms=time_ms,
     lower_layer_indices=np.asarray(lower_layer_indices, dtype=np.int32),
     lower_positions_um=lower_positions_um,
     readout_positions_um=readout_positions_um,
 )
+print(f"Exported lower-layer summary signal: {args.summary_signal}")
 
 S_hat_list = []
 for layer_i in range(N_layers):

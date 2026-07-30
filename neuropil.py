@@ -113,7 +113,7 @@ def build_radius_neighborhood_matrix(
 		if neighbor_weights_sum <= 0.0:
 			neighbor_weights = np.full(in_radius.size, 1.0 / float(in_radius.size), dtype=np.float32)
 		else:
-			neighbor_weights = 100 * (neighbor_weights / neighbor_weights_sum).astype(np.float32)
+			neighbor_weights = (neighbor_weights / neighbor_weights_sum).astype(np.float32)
 
 		rows.extend([readout_idx] * int(in_radius.size))
 		cols.extend(in_radius.tolist())
@@ -221,7 +221,7 @@ def plot_proxy_column_raster(
 ):
 	"""Save a spike raster with an optional lower-layer activation heatmap."""
 	import matplotlib.pyplot as plt
-	from matplotlib.colors import LinearSegmentedColormap
+	from matplotlib.colors import LinearSegmentedColormap, Normalize, TwoSlopeNorm
 
 	proxy_column_ids = np.asarray(proxy_column_ids, dtype=np.int32)
 	n_exc = proxy_column_ids.size
@@ -270,11 +270,25 @@ def plot_proxy_column_raster(
 			)
 			ax_spatial = None
 		activation = np.asarray(readout_tensor, dtype=np.float32)[:, exc_sort_order].T
-		activation = np.clip(activation, 0.0, None)
-		max_activation = float(np.max(activation))
-		if max_activation > 0.0:
-			activation = activation / max_activation
-		activation_cmap = LinearSegmentedColormap.from_list('white_dark_red', ['#ffffff', '#8b0000'])
+		act_min = float(np.min(activation))
+		act_max = float(np.max(activation))
+
+		if act_min < 0.0:
+			abs_lim = float(max(abs(act_min), abs(act_max)))
+			if abs_lim <= 0.0:
+				abs_lim = 1.0
+			activation_cmap = LinearSegmentedColormap.from_list(
+				'blue_white_red',
+				['#0b4cc2', '#ffffff', '#b40426'],
+			)
+			norm = TwoSlopeNorm(vmin=-abs_lim, vcenter=0.0, vmax=abs_lim)
+			cbar_label = 'Activation (signed, symmetric scale)'
+		else:
+			activation_cmap = LinearSegmentedColormap.from_list('white_dark_red', ['#ffffff', '#8b0000'])
+			max_lim = act_max if act_max > 0.0 else 1.0
+			norm = Normalize(vmin=0.0, vmax=max_lim)
+			cbar_label = 'Activation'
+
 		im = ax_heat.imshow(
 			activation,
 			aspect='auto',
@@ -282,8 +296,7 @@ def plot_proxy_column_raster(
 			interpolation='nearest',
 			extent=[float(time_ms[0]), float(time_ms[-1]), 0.0, float(n_exc)],
 			cmap=activation_cmap,
-			vmin=0.0,
-			vmax=1.0,
+			norm=norm,
 		)
 		ax_heat.set_ylabel('Neuron index')
 		ax_heat.set_title('Lower-layer activation received by readout neurons from avg. field')
@@ -308,7 +321,7 @@ def plot_proxy_column_raster(
 				clip_on=False,
 			)
 			y_cursor = y_end
-		fig.colorbar(im, ax=ax_heat, pad=0.01, fraction=0.04, label='Normalized activation')
+		fig.colorbar(im, ax=ax_heat, pad=0.01, fraction=0.04, label=cbar_label)
 	else:
 		if positions_um is not None:
 			fig, (ax, ax_spatial) = plt.subplots(
