@@ -1,5 +1,8 @@
 from brian2 import SpikeMonitor, ms
+from matplotlib.colors import LogNorm
+import matplotlib.pyplot as plt
 import numpy as np
+from pathlib import Path
 
 def bin_spikes(spike_mon: SpikeMonitor,
                bin_width_ms: float) -> np.ndarray:
@@ -68,4 +71,72 @@ def compute_mi_matrix(spike_trains: np.ndarray) -> np.ndarray:
             mi_matrix[i, j] = mi
             mi_matrix[j, i] = mi
 
+    return mi_matrix
+
+
+def construct_mi_matrix(spike_mon: SpikeMonitor,
+                        bin_width_ms: float) -> np.ndarray:
+    """Bin spikes, binarize occupancy, then compute pairwise MI matrix."""
+    spike_counts = bin_spikes(spike_mon=spike_mon, bin_width_ms=bin_width_ms)
+    spike_binary = (spike_counts > 0).astype(np.int8)
+    return compute_mi_matrix(spike_binary)
+
+
+def save_mi_heatmap(mi_matrix: np.ndarray,
+                    output_path: str,
+                    lognorm: bool = False,
+                    title: str = 'Mutual Information Heatmap') -> None:
+    """Save a red-scale MI heatmap where darker red means larger MI."""
+    matrix = np.asarray(mi_matrix, dtype=float)
+    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+        raise ValueError('mi_matrix must be a square 2D array.')
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    if lognorm:
+        positive = matrix[np.isfinite(matrix) & (matrix > 0)]
+        im = ax.imshow(
+            matrix,
+            cmap="Reds",
+            norm=LogNorm(
+                vmin=np.percentile(positive, 5),
+                vmax=np.max(positive)
+            ),
+            interpolation="nearest",
+            aspect="auto"
+        )
+    else:
+        im = ax.imshow(matrix, cmap='Reds', interpolation='nearest', aspect='auto')
+    ax.set_title(title)
+    ax.set_xlabel('Neuron index')
+    ax.set_ylabel('Neuron index')
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label('Mutual information (bits)')
+    fig.tight_layout()
+    fig.savefig(out, dpi=300)
+    plt.close(fig)
+
+
+def save_mi_outputs(spike_mon: SpikeMonitor,
+                    bin_width_ms: float,
+                    matrix_output_npz: str,
+                    heatmap_output_png: str,
+                    title: str) -> np.ndarray:
+    """Compute MI matrix, save raw matrix and heatmap, and return matrix."""
+    mi_matrix = construct_mi_matrix(spike_mon=spike_mon, bin_width_ms=bin_width_ms)
+
+    matrix_out = Path(matrix_output_npz)
+    matrix_out.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        matrix_out,
+        mi_matrix=mi_matrix.astype(np.float32),
+        bin_width_ms=np.float32(bin_width_ms),
+    )
+
+    save_mi_heatmap(mi_matrix=mi_matrix, 
+                    output_path=heatmap_output_png, 
+                    lognorm=True,
+                    title=title)
     return mi_matrix

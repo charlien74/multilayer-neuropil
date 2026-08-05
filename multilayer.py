@@ -5,6 +5,7 @@ import numpy as np
 from matplotlib.patches import Circle
 from pathlib import Path
 from model_util import *
+from mutual_information import save_mi_outputs
 from spectral_analysis import (
     compute_global_dominant_eigenvalues,
     compute_layer_ee_eigenvalues,
@@ -21,7 +22,24 @@ parser.add_argument(
     default='v',
     help='Signal exported for downstream neuropil readout construction.',
 )
+parser.add_argument(
+    '--summary-dt-ms',
+    type=float,
+    default=0.1,
+    help='Sampling timestep (ms) for exported lower-layer summary signal.',
+)
+parser.add_argument(
+    '--mi-bin-width-ms',
+    type=float,
+    default=10.0,
+    help='Bin width (ms) for mutual information matrix construction.',
+)
 args = parser.parse_args()
+
+if args.summary_dt_ms <= 0.0:
+    raise ValueError('--summary-dt-ms must be positive.')
+if args.mi_bin_width_ms <= 0.0:
+    raise ValueError('--mi-bin-width-ms must be positive.')
 
 start_scope()
 seed(RANDOM_SEED)
@@ -61,7 +79,7 @@ y: meter
 """
 
 N_layers = 5
-uniform_layer_start = N_layers - 1
+uniform_layer_start = N_layers - 2
 
 p_avg=0.02
 
@@ -215,7 +233,12 @@ elif args.summary_signal == 'g_e':
 else:
     state_monitor_vars = ['g_e', 'g_i']
 state_mon_exc_lower = [
-    StateMonitor(layers[layer_i]['exc_neurons'], state_monitor_vars, record=True)
+    StateMonitor(
+        layers[layer_i]['exc_neurons'],
+        state_monitor_vars,
+        record=True,
+        dt=args.summary_dt_ms * ms,
+    )
     for layer_i in lower_layer_indices
 ]
 
@@ -244,7 +267,7 @@ net_objects.extend(state_mon_exc_lower)
 Network(net_objects).run(duration)
 
 # Persist lower-layer summary signal and geometry for downstream readout processing.
-expected_samples = int(np.round(float(duration / defaultclock.dt)))
+expected_samples = int(np.round(float(duration / (args.summary_dt_ms * ms))))
 summary_blocks = []
 for monitor in state_mon_exc_lower:
     if args.summary_signal == 'v':
@@ -277,12 +300,14 @@ np.savez_compressed(
     'output/internal/lower_layer_voltage_raw.npz',
     voltage_lower_exc=summary_tensor,
     summary_signal=np.asarray(args.summary_signal),
+    summary_dt_ms=np.float32(args.summary_dt_ms),
     time_ms=time_ms,
     lower_layer_indices=np.asarray(lower_layer_indices, dtype=np.int32),
     lower_positions_um=lower_positions_um,
     readout_positions_um=readout_positions_um,
 )
 print(f"Exported lower-layer summary signal: {args.summary_signal}")
+print(f"Exported lower-layer summary dt: {args.summary_dt_ms:.3f} ms")
 
 S_hat_list = []
 for layer_i in range(N_layers):
@@ -310,6 +335,19 @@ with open('output/public/S_hat_values.txt', 'w') as f:
     f.write("Layer,S_hat\n")
     for layer_i in range(N_layers):
         f.write(f"{layer_i},{S_hat_list[layer_i]:.6f}\n")
+
+mi_matrix_multilayer = save_mi_outputs(
+    spike_mon=spike_mon_exc[N_layers - 1],
+    bin_width_ms=args.mi_bin_width_ms,
+    matrix_output_npz='output/internal/mi_matrix_multilayer_readout_exc.npz',
+    heatmap_output_png='output/public/mi_heatmap_multilayer_readout_exc.png',
+    title='Multilayer readout excitatory MI heatmap',
+)
+print(
+    'Saved multilayer MI matrix '
+    f"{mi_matrix_multilayer.shape} -> output/internal/mi_matrix_multilayer_readout_exc.npz"
+)
+print('Saved: output/public/mi_heatmap_multilayer_readout_exc.png')
 
 
 ## Spectral analysis
@@ -875,6 +913,8 @@ plot_uniform_proxy_band_mapping(
     output_path='output/public/uniform_proxy_band_mapping.png',
     uniform_start_idx=uniform_layer_start,
 )
+
+
 
 print('Saved: output/public/spatial_structure_3d_columns.png')
 print('Saved: output/public/uniform_layer_proxy_columns.png')

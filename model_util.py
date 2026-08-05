@@ -2,7 +2,7 @@ from brian2 import *
 
 RANDOM_SEED = 2
 # Simulation settings
-duration = 2 * second
+duration = 5 * second
 defaultclock.dt = 0.1 * ms
 
 N_exc_c = 320

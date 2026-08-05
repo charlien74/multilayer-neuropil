@@ -6,6 +6,7 @@ from brian2 import *
 from scipy import sparse
 
 from model_util import *
+from mutual_information import save_mi_outputs
 
 
 w_ee_base = 4 * 0.0156 * kHz
@@ -610,13 +611,20 @@ def save_readout_simulation_outputs(
 	)
 
 
-def main(radius_um=10.0, layer_weight_decay_lambda=1.0):
+def main(radius_um=10.0, layer_weight_decay_lambda=1.0, mi_bin_width_ms=10.0):
 	bundle, readout_tensor, neighborhood = generate_readout_tensor_from_file(
 		radius_um=radius_um,
 		layer_weight_decay_lambda=layer_weight_decay_lambda,
 	)
 	result = build_uniform_readout_layer(bundle, readout_tensor)
 	save_readout_simulation_outputs(result, readout_tensor, bundle, radius_um)
+	mi_matrix_neuropil = save_mi_outputs(
+		spike_mon=result['spike_mon_exc'],
+		bin_width_ms=mi_bin_width_ms,
+		matrix_output_npz='output/internal/mi_matrix_neuropil_readout_exc.npz',
+		heatmap_output_png='output/public/mi_heatmap_neuropil_readout_exc.png',
+		title='Neuropil readout excitatory MI heatmap',
+	)
 	plot_proxy_column_raster(
 		result,
 		result['proxy_column_ids'],
@@ -661,8 +669,13 @@ def main(radius_um=10.0, layer_weight_decay_lambda=1.0):
 		'Readout-layer spikes: '
 		f"E={result['spike_mon_exc'].num_spikes}, I={result['spike_mon_inh'].num_spikes}"
 	)
+	print(
+		'Saved neuropil MI matrix '
+		f"{mi_matrix_neuropil.shape} -> output/internal/mi_matrix_neuropil_readout_exc.npz"
+	)
 	print('Saved: output/public/neuropil_readout_raster.png')
 	print('Saved: output/public/neuropil_proxy_column_mapping.png')
+	print('Saved: output/public/mi_heatmap_neuropil_readout_exc.png')
 
 
 if __name__ == '__main__':
@@ -674,8 +687,17 @@ if __name__ == '__main__':
 		default=1.0,
 		help='Exponential decay rate by source-layer distance (larger => stronger preference for readout-adjacent lower layers).',
 	)
+	parser.add_argument(
+		'--mi-bin-width-ms',
+		type=float,
+		default=10.0,
+		help='Bin width (ms) for mutual information matrix construction.',
+	)
 	args = parser.parse_args()
+	if args.mi_bin_width_ms <= 0.0:
+		raise ValueError('--mi-bin-width-ms must be positive.')
 	main(
 		radius_um=args.radius_um,
 		layer_weight_decay_lambda=args.layer_weight_decay_lambda,
+		mi_bin_width_ms=args.mi_bin_width_ms,
 	)
