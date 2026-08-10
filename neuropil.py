@@ -492,6 +492,12 @@ def build_uniform_readout_layer(bundle, readout_tensor):
 	proxy_centroids = pentacle_points(radius=R)
 	proxy_column_ids = assign_nearest_centroid_ids(readout_positions_um, proxy_centroids)
 
+	# Keep readout neuron indices contiguous by proxy column.
+	sort_order = np.argsort(proxy_column_ids, kind='stable')
+	readout_positions_um = readout_positions_um[sort_order]
+	proxy_column_ids = proxy_column_ids[sort_order]
+	readout_tensor = np.asarray(readout_tensor, dtype=np.float32)[:, sort_order]
+
 	_, inh_positions_um, inh_cluster_ids = generate_uniform_layout(
 		radius=uniform_radius,
 		n_neurons=N_inh,

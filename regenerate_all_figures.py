@@ -80,7 +80,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--mi-bin-width-ms',
         type=float,
-        default=45.0,
+        default=5.0,
         help='Bin width (ms) used to build mutual information matrices in both scripts.',
     )
     args = parser.parse_args()

@@ -115,6 +115,11 @@ for layer_i in range(N_layers):
         neuron_locations, positions_um, cluster_ids = generate_uniform_layout(radius=uniform_radius, n_neurons=1600)
         inh_neuron_locations, inh_positions_um, _ = generate_uniform_layout(radius=uniform_radius, n_neurons=N_inh)
         cluster_ids = assign_nearest_centroid_ids(positions_um, centroids)
+        # Keep neuron indices contiguous by proxy column for downstream matrix analyses.
+        sort_order = np.argsort(cluster_ids, kind='stable')
+        positions_um = positions_um[sort_order]
+        cluster_ids = cluster_ids[sort_order]
+        neuron_locations = [neuron_locations[idx] for idx in sort_order]
         num_exc_per_layer = len(neuron_locations)  # Update the number of excitatory neurons for the top layer
         p_ee_in = p_avg
         p_ee_out = p_avg
