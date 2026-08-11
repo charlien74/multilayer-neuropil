@@ -8,7 +8,9 @@ from numpy.linalg import inv
 from scipy import sparse
 
 
-def deltacon_similarity_from_adj(A1: np.ndarray, A2: np.ndarray, epsilon: float = 0.01) -> float:
+def deltacon_similarity_from_adj(A1: np.ndarray, 
+                                 A2: np.ndarray, 
+                                 epsilon: float = 0.01) -> float:
     """
     Compute DeltaCon similarity between two graphs given by adjacency matrices.
     Parameters:
@@ -20,28 +22,39 @@ def deltacon_similarity_from_adj(A1: np.ndarray, A2: np.ndarray, epsilon: float 
         similarity : float
             DeltaCon similarity in [0, 1]
     """
-    # Check dimensions
     if A1.shape != A2.shape:
-        raise ValueError("Adjacency matrices must have the same dimensions")
- 
+        raise ValueError('Adjacency matrices must have the same dimensions')
+    if A1.ndim != 2 or A1.shape[0] != A1.shape[1]:
+        raise ValueError('Adjacency matrices must be square')
+
+    # DeltaCon is defined for undirected graphs; for this usecase we compare
+    # directed/weighted matrices via their undirected support.
+    A1 = np.asarray(A1, dtype=np.float64)
+    A2 = np.asarray(A2, dtype=np.float64)
+    A1 = np.maximum(A1, A1.T)
+    A2 = np.maximum(A2, A2.T)
+    A1 = np.clip(A1, 0.0, None)
+    A2 = np.clip(A2, 0.0, None)
+    np.fill_diagonal(A1, 0.0)
+    np.fill_diagonal(A2, 0.0)
+
     n = A1.shape[0]
-    I = np.eye(n)
- 
-    # Degree matrices
-    D1 = np.diag(np.sum(A1, axis=1))
-    D2 = np.diag(np.sum(A2, axis=1))
- 
-    # Affinity matrices
-    S1 = inv(I + epsilon**2 * D1 - epsilon * A1)
-    S2 = inv(I + epsilon**2 * D2 - epsilon * A2)
- 
-    # Rooted Euclidean Distance (DeltaCon core)
+    I = np.eye(n, dtype=np.float64)
+
+    def affinity_matrix(A: np.ndarray) -> np.ndarray:
+        D = np.diag(np.sum(A, axis=1))
+        M = I + (epsilon ** 2) * D - epsilon * A
+        # Solve M X = I rather than forming inv(M) explicitly.
+        S = np.linalg.solve(M, I)
+        # Numerical noise can create tiny negative values; clip before sqrt.
+        return np.clip(S, 0.0, None)
+
+    S1 = affinity_matrix(A1)
+    S2 = affinity_matrix(A2)
+
     diff = np.sqrt(S1) - np.sqrt(S2)
-    d = np.sqrt(np.sum(diff**2))
- 
-    # Convert distance to similarity
-    similarity = 1 / (1 + d)
-    return similarity
+    d = np.linalg.norm(diff, ord='fro')
+    return float(1.0 / (1.0 + d))
 
 
 def Connector(Q):
