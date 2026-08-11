@@ -699,9 +699,18 @@ if __name__ == '__main__':
 		default=10.0,
 		help='Bin width (ms) for mutual information matrix construction.',
 	)
+	parser.add_argument(
+		'--duration-ms',
+		type=float,
+		default=2000.0,
+		help='Simulation duration in milliseconds.',
+	)
 	args = parser.parse_args()
 	if args.mi_bin_width_ms <= 0.0:
 		raise ValueError('--mi-bin-width-ms must be positive.')
+	if args.duration_ms <= 0.0:
+		raise ValueError('--duration-ms must be positive.')
+	set_simulation_duration_ms(args.duration_ms)
 	main(
 		radius_um=args.radius_um,
 		layer_weight_decay_lambda=args.layer_weight_decay_lambda,

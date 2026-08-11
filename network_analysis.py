@@ -37,6 +37,8 @@ def deltacon_similarity_from_adj(A1: np.ndarray, A2: np.ndarray, epsilon: float 
     # Convert distance to similarity
     similarity = 1 / (1 + d)
     return similarity
+
+
 def Connector(Q):
     D = nx.to_networkx_graph(Q,create_using=nx.DiGraph())
     Isolate_list=list(nx.isolates(D))
@@ -48,6 +50,7 @@ def Connector(Q):
                 Q[i-1,i]=0.0001
     del D
     return Q
+
  
 def kNN(A,N,k):
     np.fill_diagonal(A,0)

@@ -9,7 +9,7 @@ def run_step(cmd, label):
     subprocess.run(cmd, check=True)
 
 
-def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi_bin_width_ms):
+def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi_bin_width_ms, duration_ms):
     repo_root = Path(__file__).resolve().parent
     python_exec = sys.executable
 
@@ -28,6 +28,8 @@ def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi
             str(summary_dt_ms),
             '--mi-bin-width-ms',
             str(mi_bin_width_ms),
+            '--duration-ms',
+            str(duration_ms),
         ],
         '1/2 multilayer',
     )
@@ -41,6 +43,8 @@ def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi
             str(layer_weight_decay_lambda),
             '--mi-bin-width-ms',
             str(mi_bin_width_ms),
+            '--duration-ms',
+            str(duration_ms),
         ],
         '2/2 neuropil',
     )
@@ -83,13 +87,22 @@ if __name__ == '__main__':
         default=5.0,
         help='Bin width (ms) used to build mutual information matrices in both scripts.',
     )
+    parser.add_argument(
+        '--duration-ms',
+        type=float,
+        default=2000.0,
+        help='Simulation duration in milliseconds passed to the underlying scripts.',
+    )
     args = parser.parse_args()
     if args.mi_bin_width_ms <= 0.0:
         raise ValueError('--mi-bin-width-ms must be positive.')
+    if args.duration_ms <= 0.0:
+        raise ValueError('--duration-ms must be positive.')
     main(
         radius_um=args.radius_um,
         layer_weight_decay_lambda=args.layer_weight_decay_lambda,
         summary_signal=args.summary_signal,
         summary_dt_ms=args.summary_dt_ms,
         mi_bin_width_ms=args.mi_bin_width_ms,
+        duration_ms=args.duration_ms,
     )
