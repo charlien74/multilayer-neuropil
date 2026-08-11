@@ -164,6 +164,58 @@ def knn_functional_binary(mi_matrix: np.ndarray, k_val: int) -> np.ndarray:
     return func_bin
 
 
+def louvain_partition_labels_from_adj(adj_bin: np.ndarray) -> np.ndarray:
+    """Run Louvain on an undirected view of adjacency and return integer labels per node."""
+    undirected_adj = np.maximum(adj_bin, adj_bin.T)
+    G = nx.from_numpy_array(undirected_adj)
+    communities = nx.community.louvain_communities(G, weight='weight', seed=0)
+
+    labels = np.full(G.number_of_nodes(), -1, dtype=np.int32)
+    for comm_idx, comm_nodes in enumerate(communities):
+        for node in comm_nodes:
+            labels[int(node)] = comm_idx
+
+    if np.any(labels < 0):
+        raise RuntimeError('Louvain did not assign all nodes to communities.')
+    return labels
+
+
+def normalized_mutual_information(labels_a: np.ndarray, labels_b: np.ndarray) -> float:
+    """NMI = 2I(A;B) / (H(A) + H(B)) using natural log."""
+    if labels_a.shape != labels_b.shape:
+        raise ValueError('Partition label arrays must have identical shape.')
+
+    n = int(labels_a.size)
+    if n == 0:
+        raise ValueError('Partition label arrays must be non-empty.')
+
+    uniq_a, inv_a = np.unique(labels_a, return_inverse=True)
+    uniq_b, inv_b = np.unique(labels_b, return_inverse=True)
+    n_a = int(uniq_a.size)
+    n_b = int(uniq_b.size)
+
+    contingency = np.zeros((n_a, n_b), dtype=np.float64)
+    np.add.at(contingency, (inv_a, inv_b), 1.0)
+
+    p_ab = contingency / float(n)
+    p_a = np.sum(p_ab, axis=1)
+    p_b = np.sum(p_ab, axis=0)
+
+    nz = p_ab > 0.0
+    rows, cols = np.where(nz)
+    mi = float(np.sum(p_ab[rows, cols] * np.log(p_ab[rows, cols] / (p_a[rows] * p_b[cols]))))
+
+    nz_a = p_a > 0.0
+    nz_b = p_b > 0.0
+    h_a = float(-np.sum(p_a[nz_a] * np.log(p_a[nz_a])))
+    h_b = float(-np.sum(p_b[nz_b] * np.log(p_b[nz_b])))
+
+    denom = h_a + h_b
+    if denom <= 0.0:
+        return 1.0 if np.array_equal(labels_a, labels_b) else 0.0
+    return float(2.0 * mi / denom)
+
+
 def append_results_row(
     output_path: Path,
     duration_ms: float,
@@ -174,6 +226,7 @@ def append_results_row(
     layer_weight_decay_lambda: float,
     radius_um: float,
     k_used_knn: int,
+    louvain_nmi: float,
     structural_a_functional_a: float,
     structural_b_functional_b: float,
     functional_a_functional_b: float,
@@ -187,6 +240,7 @@ def append_results_row(
         'layer_weight_decay_lambda',
         'radius_um',
         'k_used_knn',
+        'louvain_nmi',
         'structural_a_functional_a',
         'structural_b_functional_b',
         'functional_a_functional_b',
@@ -207,6 +261,7 @@ def append_results_row(
             f"{layer_weight_decay_lambda:.6f}",
             f"{radius_um:.6f}",
             str(int(k_used_knn)),
+            f"{louvain_nmi:.6f}",
             f"{structural_a_functional_a:.6f}",
             f"{structural_b_functional_b:.6f}",
             f"{functional_a_functional_b:.6f}",
@@ -252,6 +307,10 @@ def run_analysis(
     functional_a_bin = knn_functional_binary(mi_a, k_eff)
     functional_b_bin = knn_functional_binary(mi_b, k_eff)
 
+    louvain_labels_a = louvain_partition_labels_from_adj(functional_a_bin)
+    louvain_labels_b = louvain_partition_labels_from_adj(functional_b_bin)
+    louvain_nmi = normalized_mutual_information(louvain_labels_a, louvain_labels_b)
+
     sim_struct_a_func_a = float(deltacon_similarity_from_adj(structural_bin, functional_a_bin))
     sim_struct_b_func_b = float(deltacon_similarity_from_adj(structural_bin, functional_b_bin))
     sim_func_a_func_b = float(deltacon_similarity_from_adj(functional_a_bin, functional_b_bin))
@@ -266,6 +325,7 @@ def run_analysis(
         layer_weight_decay_lambda=float(layer_weight_decay_lambda),
         radius_um=float(radius_um),
         k_used_knn=int(k_eff),
+        louvain_nmi=float(louvain_nmi),
         structural_a_functional_a=sim_struct_a_func_a,
         structural_b_functional_b=sim_struct_b_func_b,
         functional_a_functional_b=sim_func_a_func_b,
@@ -276,6 +336,7 @@ def run_analysis(
     print(f"DeltaCon structural_a_functional_a: {sim_struct_a_func_a:.6f}")
     print(f"DeltaCon structural_b_functional_b: {sim_struct_b_func_b:.6f}")
     print(f"DeltaCon functional_a_functional_b: {sim_func_a_func_b:.6f}")
+    print(f"Louvain partition NMI (functional_a vs functional_b): {louvain_nmi:.6f}")
     print(f"Appended results row to: {output_path}")
 
 
