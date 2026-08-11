@@ -40,6 +40,12 @@ parser.add_argument(
     default=2000.0,
     help='Simulation duration in milliseconds.',
 )
+parser.add_argument(
+    '--r-ee',
+    type=float,
+    default=2.0,
+    help='Community ratio parameter R_ee used by get_p_connection_in_out.',
+)
 args = parser.parse_args()
 
 if args.summary_dt_ms <= 0.0:
@@ -101,7 +107,7 @@ def assign_nearest_centroid_ids(positions_um, centroids):
     dist2 = np.sum(diffs * diffs, axis=2)
     return np.argmin(dist2, axis=1).astype(int)
 
-R_ee = 2.0
+R_ee = float(args.r_ee)
 interlayer_decay_l = 30 * um
 num_exc_per_layer = N_exc_c * 5  # Number of excitatory neurons per layer
 uniform_radius = (R + 2 * sigma_c) / um  # Ensure neurons are within a reasonable distance from the center

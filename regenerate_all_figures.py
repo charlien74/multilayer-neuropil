@@ -9,7 +9,7 @@ def run_step(cmd, label):
     subprocess.run(cmd, check=True)
 
 
-def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi_bin_width_ms, duration_ms):
+def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi_bin_width_ms, duration_ms, r_ee):
     repo_root = Path(__file__).resolve().parent
     python_exec = sys.executable
 
@@ -22,6 +22,8 @@ def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi
             python_exec,
             str(repo_root / 'multilayer.py'),
             '--no-show',
+            '--r-ee',
+            str(r_ee),
             '--summary-signal',
             summary_signal,
             '--summary-dt-ms',
@@ -31,7 +33,7 @@ def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi
             '--duration-ms',
             str(duration_ms),
         ],
-        '1/2 multilayer',
+        '1/3 multilayer',
     )
     run_step(
         [
@@ -46,7 +48,30 @@ def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi
             '--duration-ms',
             str(duration_ms),
         ],
-        '2/2 neuropil',
+        '2/3 neuropil',
+    )
+    run_step(
+        [
+            python_exec,
+            str(repo_root / 'network_analysis.py'),
+            '--internal-dir',
+            str(repo_root / 'output' / 'internal'),
+            '--output-file',
+            str(repo_root / 'output' / 'public' / 'network_compare_results.txt'),
+            '--r-ee',
+            str(r_ee),
+            '--summary-signal',
+            summary_signal,
+            '--summary-dt-ms',
+            str(summary_dt_ms),
+            '--layer-weight-decay-lambda',
+            str(layer_weight_decay_lambda),
+            '--radius-um',
+            str(radius_um),
+            '--duration-ms',
+            str(duration_ms),
+        ],
+        '3/3 network analysis',
     )
 
     print("\nDone.")
@@ -93,6 +118,12 @@ if __name__ == '__main__':
         default=2000.0,
         help='Simulation duration in milliseconds passed to the underlying scripts.',
     )
+    parser.add_argument(
+        '--r-ee',
+        type=float,
+        default=2.0,
+        help='R_ee metadata value recorded by network analysis output.',
+    )
     args = parser.parse_args()
     if args.mi_bin_width_ms <= 0.0:
         raise ValueError('--mi-bin-width-ms must be positive.')
@@ -105,4 +136,5 @@ if __name__ == '__main__':
         summary_dt_ms=args.summary_dt_ms,
         mi_bin_width_ms=args.mi_bin_width_ms,
         duration_ms=args.duration_ms,
+        r_ee=args.r_ee,
     )
