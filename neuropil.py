@@ -608,6 +608,8 @@ def save_readout_simulation_outputs(
 		readout_exc_voltage=readout_v,
 		time_ms=time_ms,
 		radius_um=np.float32(radius_um),
+		n_readout_exc=np.int32(readout_v.shape[0]),
+		duration_ms=np.float32(float(duration / ms)),
 		readout_positions_um=np.asarray(bundle['readout_positions_um'], dtype=np.float32),
 		exc_spike_i=exc_spike_i,
 		exc_spike_t_ms=exc_spike_t_ms,

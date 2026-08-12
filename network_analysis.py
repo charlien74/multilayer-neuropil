@@ -7,6 +7,8 @@ import numpy as np
 from numpy.linalg import inv
 from scipy import sparse
 
+from mutual_information import compute_mi_matrix
+
 
 def deltacon_similarity_from_adj(A1: np.ndarray, 
                                  A2: np.ndarray, 
@@ -124,6 +126,105 @@ def load_scalar(npz_path: Path, key: str) -> float:
         if key not in z:
             raise KeyError(f"Key '{key}' not found in {npz_path}")
         return float(np.asarray(z[key]).item())
+
+
+def load_spike_events(npz_path: Path) -> tuple[np.ndarray, np.ndarray, int]:
+    """Load excitatory spike events and neuron count from an internal NPZ file."""
+    with np.load(npz_path, allow_pickle=False) as z:
+        if 'exc_spike_i' not in z or 'exc_spike_t_ms' not in z:
+            raise KeyError(
+                f"Spike file {npz_path} must contain 'exc_spike_i' and 'exc_spike_t_ms'."
+            )
+        spike_i = np.asarray(z['exc_spike_i'], dtype=np.int64)
+        spike_t_ms = np.asarray(z['exc_spike_t_ms'], dtype=np.float64)
+        if 'n_readout_exc' not in z:
+            raise KeyError(f"Spike file {npz_path} must contain 'n_readout_exc'.")
+        n_neurons = int(np.asarray(z['n_readout_exc']).item())
+    return spike_i, spike_t_ms, n_neurons
+
+
+def bin_spike_events_binary(
+    spike_i: np.ndarray,
+    spike_t_ms: np.ndarray,
+    n_neurons: int,
+    bin_width_ms: float,
+) -> np.ndarray:
+    """Bin spike events into binary occupancy (N neurons x T bins)."""
+    if bin_width_ms <= 0.0:
+        raise ValueError('bin_width_ms must be positive.')
+    if n_neurons <= 0:
+        raise ValueError('n_neurons must be positive.')
+
+    spike_i = np.asarray(spike_i, dtype=np.int64)
+    spike_t_ms = np.asarray(spike_t_ms, dtype=np.float64)
+    if spike_t_ms.size == 0:
+        return np.zeros((n_neurons, 1), dtype=np.int8)
+
+    n_bins = int(np.floor(float(np.max(spike_t_ms)) / float(bin_width_ms))) + 1
+    counts = np.zeros((n_neurons, n_bins), dtype=np.int32)
+
+    bin_ids = np.floor(spike_t_ms / float(bin_width_ms)).astype(np.int64)
+    valid = (
+        (spike_i >= 0)
+        & (spike_i < n_neurons)
+        & (bin_ids >= 0)
+        & (bin_ids < n_bins)
+    )
+    np.add.at(counts, (spike_i[valid], bin_ids[valid]), 1)
+    return (counts > 0).astype(np.int8)
+
+
+def save_mi_matrix_npz(mi_matrix: np.ndarray, output_path: Path, bin_width_ms: float) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        output_path,
+        mi_matrix=np.asarray(mi_matrix, dtype=np.float32),
+        bin_width_ms=np.float32(bin_width_ms),
+    )
+
+
+def recompute_mi_matrices_from_spikes(
+    input_internal_dir: Path,
+    output_internal_dir: Path,
+    bin_width_ms: float,
+) -> None:
+    """Recompute both readout MI matrices from saved spike-event artifacts."""
+    multilayer_spikes_path = input_internal_dir / 'multilayer_readout_spikes.npz'
+    neuropil_spikes_path = input_internal_dir / 'readout_layer_simulation.npz'
+
+    if not multilayer_spikes_path.exists():
+        raise FileNotFoundError(
+            f"Missing multilayer spike artifact: {multilayer_spikes_path}"
+        )
+    if not neuropil_spikes_path.exists():
+        raise FileNotFoundError(
+            f"Missing neuropil spike artifact: {neuropil_spikes_path}"
+        )
+
+    multi_i, multi_t, multi_n = load_spike_events(multilayer_spikes_path)
+    neuro_i, neuro_t, neuro_n = load_spike_events(neuropil_spikes_path)
+
+    multi_binary = bin_spike_events_binary(multi_i, multi_t, multi_n, bin_width_ms)
+    neuro_binary = bin_spike_events_binary(neuro_i, neuro_t, neuro_n, bin_width_ms)
+
+    mi_multi = compute_mi_matrix(multi_binary)
+    mi_neuro = compute_mi_matrix(neuro_binary)
+
+    save_mi_matrix_npz(
+        mi_multi,
+        output_internal_dir / 'mi_matrix_multilayer_readout_exc.npz',
+        bin_width_ms,
+    )
+    save_mi_matrix_npz(
+        mi_neuro,
+        output_internal_dir / 'mi_matrix_neuropil_readout_exc.npz',
+        bin_width_ms,
+    )
+
+    print(
+        'Recomputed MI matrices from saved spikes: '
+        f"multilayer={mi_multi.shape}, neuropil={mi_neuro.shape}, bin_width_ms={bin_width_ms:.6f}"
+    )
 
 
 def load_readout_structural_adj(internal_dir: Path) -> np.ndarray:
@@ -245,7 +346,7 @@ def append_results_row(
     functional_a_functional_b: float,
 ) -> None:
     header = [
-        'duration',
+        'duration_ms',
         'R_ee',
         'mi_bin_size_ms',
         'summary_signal',
@@ -282,7 +383,8 @@ def append_results_row(
 
 
 def run_analysis(
-    internal_dir: Path,
+    input_internal_dir: Path,
+    output_internal_dir: Path,
     output_path: Path,
     r_ee: float,
     duration_ms: float,
@@ -290,9 +392,18 @@ def run_analysis(
     summary_dt_ms: float,
     layer_weight_decay_lambda: float,
     radius_um: float,
+    recompute_mi_from_spikes: bool,
+    mi_bin_width_ms: float,
 ) -> None:
-    mi_a_path = internal_dir / 'mi_matrix_multilayer_readout_exc.npz'
-    mi_b_path = internal_dir / 'mi_matrix_neuropil_readout_exc.npz'
+    mi_a_path = output_internal_dir / 'mi_matrix_multilayer_readout_exc.npz'
+    mi_b_path = output_internal_dir / 'mi_matrix_neuropil_readout_exc.npz'
+
+    if recompute_mi_from_spikes or (not mi_a_path.exists()) or (not mi_b_path.exists()):
+        recompute_mi_matrices_from_spikes(
+            input_internal_dir=input_internal_dir,
+            output_internal_dir=output_internal_dir,
+            bin_width_ms=mi_bin_width_ms,
+        )
 
     mi_a = load_npz_matrix(mi_a_path, 'mi_matrix')
     mi_b = load_npz_matrix(mi_b_path, 'mi_matrix')
@@ -304,7 +415,7 @@ def run_analysis(
     if abs(mi_bin_a - mi_bin_b) > 1e-9:
         raise ValueError(f"MI bin widths differ: {mi_bin_a} vs {mi_bin_b}")
 
-    structural_adj = load_readout_structural_adj(internal_dir)
+    structural_adj = load_readout_structural_adj(input_internal_dir)
     if structural_adj.shape != mi_a.shape:
         raise ValueError(
             'Structural readout adjacency shape does not match MI matrix shape: '
@@ -355,23 +466,46 @@ def run_analysis(
 
 def main():
     parser = argparse.ArgumentParser(description='Compare structural and functional readout networks.')
-    parser.add_argument('--internal-dir', default='output/internal', help='Directory containing internal NPZ outputs.')
-    parser.add_argument('--output-file', default='output/public/network_compare_results.txt', help='Append-only results file path.')
+    parser.add_argument(
+        '--input-internal-dir',
+        default='output/internal',
+        help='Directory containing reusable simulation outputs and structural artifacts.',
+    )
+    parser.add_argument(
+        '--output-internal-dir',
+        default='output/internal',
+        help='Directory where derived MI matrices for this analysis run are written/read.',
+    )
+    parser.add_argument('--output-file', default='output/public/network_compare_results.csv', help='Append-only results file path.')
     parser.add_argument('--r-ee', type=float, default=2.0, help='R_ee value to record in results.')
     parser.add_argument('--duration-ms', type=float, default=2000.0, help='Duration to record in results.')
     parser.add_argument('--summary-signal', choices=['v', 'i_syn', 'g_e'], default='v', help='Summary signal metadata value from multilayer run.')
     parser.add_argument('--summary-dt-ms', type=float, default=0.1, help='Summary timestep metadata value from multilayer run.')
     parser.add_argument('--layer-weight-decay-lambda', type=float, default=1.0, help='Layer weighting decay metadata value from neuropil run.')
     parser.add_argument('--radius-um', type=float, default=25.0, help='Neighborhood radius metadata value from neuropil run.')
+    parser.add_argument(
+        '--recompute-mi-from-spikes',
+        action='store_true',
+        help='Recompute MI matrices from saved readout spike-event artifacts before analysis.',
+    )
+    parser.add_argument(
+        '--mi-bin-width-ms',
+        type=float,
+        default=10.0,
+        help='Bin width (ms) used only when --recompute-mi-from-spikes is enabled or MI files are missing.',
+    )
     args = parser.parse_args()
 
     if args.duration_ms <= 0.0:
         raise ValueError('--duration-ms must be positive.')
     if args.summary_dt_ms <= 0.0:
         raise ValueError('--summary-dt-ms must be positive.')
+    if args.mi_bin_width_ms <= 0.0:
+        raise ValueError('--mi-bin-width-ms must be positive.')
 
     run_analysis(
-        internal_dir=Path(args.internal_dir),
+        input_internal_dir=Path(args.input_internal_dir),
+        output_internal_dir=Path(args.output_internal_dir),
         output_path=Path(args.output_file),
         r_ee=float(args.r_ee),
         duration_ms=float(args.duration_ms),
@@ -379,6 +513,8 @@ def main():
         summary_dt_ms=float(args.summary_dt_ms),
         layer_weight_decay_lambda=float(args.layer_weight_decay_lambda),
         radius_um=float(args.radius_um),
+        recompute_mi_from_spikes=bool(args.recompute_mi_from_spikes),
+        mi_bin_width_ms=float(args.mi_bin_width_ms),
     )
 
 

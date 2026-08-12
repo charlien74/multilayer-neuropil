@@ -95,7 +95,7 @@ y: meter
 """
 
 N_layers = 5
-uniform_layer_start = N_layers - 2
+uniform_layer_start = N_layers - 1
 
 p_avg=0.02
 
@@ -357,6 +357,17 @@ with open('output/public/S_hat_values.txt', 'w') as f:
     for layer_i in range(N_layers):
         f.write(f"{layer_i},{S_hat_list[layer_i]:.6f}\n")
 
+# Persist readout excitatory spike events for downstream MI recomputation.
+readout_exc_spike_i = np.asarray(spike_mon_exc[N_layers - 1].i[:], dtype=np.int32)
+readout_exc_spike_t_ms = np.asarray(spike_mon_exc[N_layers - 1].t[:] / ms, dtype=np.float32)
+np.savez_compressed(
+    'output/internal/multilayer_readout_spikes.npz',
+    exc_spike_i=readout_exc_spike_i,
+    exc_spike_t_ms=readout_exc_spike_t_ms,
+    n_readout_exc=np.int32(len(spike_mon_exc[N_layers - 1].count)),
+    duration_ms=np.float32(float(duration / ms)),
+)
+
 mi_matrix_multilayer = save_mi_outputs(
     spike_mon=spike_mon_exc[N_layers - 1],
     bin_width_ms=args.mi_bin_width_ms,
@@ -371,22 +382,22 @@ print(
 print('Saved: output/public/mi_heatmap_multilayer_readout_exc.png')
 
 
-## Spectral analysis
-# adjacency_global, layer_index_info = extract_global_weighted_adjacency(layers, interlayer_synapses)
-# np.savez_compressed(
-#     'output/internal/adjacency_global_sparse.npz',
-#     data=adjacency_global.data,
-#     indices=adjacency_global.indices,
-#     indptr=adjacency_global.indptr,
-#     shape=np.asarray(adjacency_global.shape, dtype=np.int64),
-# )
+# Save global adjacency matrix and layer offsets for downstream network analysis.
+adjacency_global, layer_index_info = extract_global_weighted_adjacency(layers, interlayer_synapses)
+np.savez_compressed(
+    'output/internal/adjacency_global_sparse.npz',
+    data=adjacency_global.data,
+    indices=adjacency_global.indices,
+    indptr=adjacency_global.indptr,
+    shape=np.asarray(adjacency_global.shape, dtype=np.int64),
+)
 
-# with open('output/internal/adjacency_global_layer_offsets.csv', 'w') as f:
-#     f.write('layer,exc_offset,inh_offset,n_exc,n_inh\n')
-#     for layer_i, info in enumerate(layer_index_info):
-#         f.write(
-#             f"{layer_i},{info['exc_offset']},{info['inh_offset']},{info['n_exc']},{info['n_inh']}\n"
-#         )
+with open('output/internal/adjacency_global_layer_offsets.csv', 'w') as f:
+    f.write('layer,exc_offset,inh_offset,n_exc,n_inh\n')
+    for layer_i, info in enumerate(layer_index_info):
+        f.write(
+            f"{layer_i},{info['exc_offset']},{info['inh_offset']},{info['n_exc']},{info['n_inh']}\n"
+        )
 
 # global_eigs = compute_global_dominant_eigenvalues(adjacency_global, k=120)
 # plot_complex_spectrum(

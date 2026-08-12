@@ -54,7 +54,9 @@ def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi
         [
             python_exec,
             str(repo_root / 'network_analysis.py'),
-            '--internal-dir',
+            '--input-internal-dir',
+            str(repo_root / 'output' / 'internal'),
+            '--output-internal-dir',
             str(repo_root / 'output' / 'internal'),
             '--output-file',
             str(repo_root / 'output' / 'public' / 'network_compare_results.txt'),
