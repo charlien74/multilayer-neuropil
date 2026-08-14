@@ -7,7 +7,7 @@ import numpy as np
 from numpy.linalg import inv
 from scipy import sparse
 
-from mutual_information import compute_mi_matrix
+from mutual_information import bin_spike_events_and_compute_mi_matrix_corrected
 
 
 def deltacon_similarity_from_adj(A1: np.ndarray, 
@@ -143,37 +143,6 @@ def load_spike_events(npz_path: Path) -> tuple[np.ndarray, np.ndarray, int]:
     return spike_i, spike_t_ms, n_neurons
 
 
-def bin_spike_events_binary(
-    spike_i: np.ndarray,
-    spike_t_ms: np.ndarray,
-    n_neurons: int,
-    bin_width_ms: float,
-) -> np.ndarray:
-    """Bin spike events into binary occupancy (N neurons x T bins)."""
-    if bin_width_ms <= 0.0:
-        raise ValueError('bin_width_ms must be positive.')
-    if n_neurons <= 0:
-        raise ValueError('n_neurons must be positive.')
-
-    spike_i = np.asarray(spike_i, dtype=np.int64)
-    spike_t_ms = np.asarray(spike_t_ms, dtype=np.float64)
-    if spike_t_ms.size == 0:
-        return np.zeros((n_neurons, 1), dtype=np.int8)
-
-    n_bins = int(np.floor(float(np.max(spike_t_ms)) / float(bin_width_ms))) + 1
-    counts = np.zeros((n_neurons, n_bins), dtype=np.int32)
-
-    bin_ids = np.floor(spike_t_ms / float(bin_width_ms)).astype(np.int64)
-    valid = (
-        (spike_i >= 0)
-        & (spike_i < n_neurons)
-        & (bin_ids >= 0)
-        & (bin_ids < n_bins)
-    )
-    np.add.at(counts, (spike_i[valid], bin_ids[valid]), 1)
-    return (counts > 0).astype(np.int8)
-
-
 def save_mi_matrix_npz(mi_matrix: np.ndarray, output_path: Path, bin_width_ms: float) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
@@ -187,6 +156,7 @@ def recompute_mi_matrices_from_spikes(
     input_internal_dir: Path,
     output_internal_dir: Path,
     bin_width_ms: float,
+    lag_ms: float,
 ) -> None:
     """Recompute both readout MI matrices from saved spike-event artifacts."""
     multilayer_spikes_path = input_internal_dir / 'multilayer_readout_spikes.npz'
@@ -204,11 +174,26 @@ def recompute_mi_matrices_from_spikes(
     multi_i, multi_t, multi_n = load_spike_events(multilayer_spikes_path)
     neuro_i, neuro_t, neuro_n = load_spike_events(neuropil_spikes_path)
 
-    multi_binary = bin_spike_events_binary(multi_i, multi_t, multi_n, bin_width_ms)
-    neuro_binary = bin_spike_events_binary(neuro_i, neuro_t, neuro_n, bin_width_ms)
+    lag_bins = max(0, int(np.round(float(lag_ms) / float(bin_width_ms))))
 
-    mi_multi = compute_mi_matrix(multi_binary)
-    mi_neuro = compute_mi_matrix(neuro_binary)
+    mi_multi = bin_spike_events_and_compute_mi_matrix_corrected(
+        spike_i=multi_i,
+        spike_t_ms=multi_t,
+        n_neurons=multi_n,
+        bin_width_ms=bin_width_ms,
+        n_null=100,
+        lag=lag_bins,
+        method='grass',
+    )
+    mi_neuro = bin_spike_events_and_compute_mi_matrix_corrected(
+        spike_i=neuro_i,
+        spike_t_ms=neuro_t,
+        n_neurons=neuro_n,
+        bin_width_ms=bin_width_ms,
+        n_null=100,
+        lag=lag_bins,
+        method='grass',
+    )
 
     save_mi_matrix_npz(
         mi_multi,
@@ -223,7 +208,8 @@ def recompute_mi_matrices_from_spikes(
 
     print(
         'Recomputed MI matrices from saved spikes: '
-        f"multilayer={mi_multi.shape}, neuropil={mi_neuro.shape}, bin_width_ms={bin_width_ms:.6f}"
+        f"multilayer={mi_multi.shape}, neuropil={mi_neuro.shape}, "
+        f"bin_width_ms={bin_width_ms:.6f}, lag_ms={lag_ms:.6f}"
     )
 
 
@@ -394,6 +380,7 @@ def run_analysis(
     radius_um: float,
     recompute_mi_from_spikes: bool,
     mi_bin_width_ms: float,
+    mi_lag_ms: float,
 ) -> None:
     mi_a_path = output_internal_dir / 'mi_matrix_multilayer_readout_exc.npz'
     mi_b_path = output_internal_dir / 'mi_matrix_neuropil_readout_exc.npz'
@@ -403,6 +390,7 @@ def run_analysis(
             input_internal_dir=input_internal_dir,
             output_internal_dir=output_internal_dir,
             bin_width_ms=mi_bin_width_ms,
+            lag_ms=mi_lag_ms,
         )
 
     mi_a = load_npz_matrix(mi_a_path, 'mi_matrix')
@@ -494,6 +482,12 @@ def main():
         default=10.0,
         help='Bin width (ms) used only when --recompute-mi-from-spikes is enabled or MI files are missing.',
     )
+    parser.add_argument(
+        '--mi-lag-ms',
+        type=float,
+        default=10.0,
+        help='Lag window (ms) used when recomputing MI from saved spikes.',
+    )
     args = parser.parse_args()
 
     if args.duration_ms <= 0.0:
@@ -502,6 +496,8 @@ def main():
         raise ValueError('--summary-dt-ms must be positive.')
     if args.mi_bin_width_ms <= 0.0:
         raise ValueError('--mi-bin-width-ms must be positive.')
+    if args.mi_lag_ms < 0.0:
+        raise ValueError('--mi-lag-ms must be non-negative.')
 
     run_analysis(
         input_internal_dir=Path(args.input_internal_dir),
@@ -515,6 +511,7 @@ def main():
         radius_um=float(args.radius_um),
         recompute_mi_from_spikes=bool(args.recompute_mi_from_spikes),
         mi_bin_width_ms=float(args.mi_bin_width_ms),
+        mi_lag_ms=float(args.mi_lag_ms),
     )
 
 

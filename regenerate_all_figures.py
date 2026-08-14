@@ -9,7 +9,7 @@ def run_step(cmd, label):
     subprocess.run(cmd, check=True)
 
 
-def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi_bin_width_ms, duration_ms, r_ee):
+def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi_bin_width_ms, mi_lag_ms, duration_ms, r_ee):
     repo_root = Path(__file__).resolve().parent
     python_exec = sys.executable
 
@@ -72,6 +72,8 @@ def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi
             str(radius_um),
             '--duration-ms',
             str(duration_ms),
+            '--mi-lag-ms',
+            str(mi_lag_ms),
         ],
         '3/3 network analysis',
     )
@@ -115,6 +117,12 @@ if __name__ == '__main__':
         help='Bin width (ms) used to build mutual information matrices in both scripts.',
     )
     parser.add_argument(
+        '--mi-lag-ms',
+        type=float,
+        default=10.0,
+        help='Lag window (ms) used when network_analysis recomputes MI from saved spikes.',
+    )
+    parser.add_argument(
         '--duration-ms',
         type=float,
         default=2000.0,
@@ -129,6 +137,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.mi_bin_width_ms <= 0.0:
         raise ValueError('--mi-bin-width-ms must be positive.')
+    if args.mi_lag_ms < 0.0:
+        raise ValueError('--mi-lag-ms must be non-negative.')
     if args.duration_ms <= 0.0:
         raise ValueError('--duration-ms must be positive.')
     main(
@@ -137,6 +147,7 @@ if __name__ == '__main__':
         summary_signal=args.summary_signal,
         summary_dt_ms=args.summary_dt_ms,
         mi_bin_width_ms=args.mi_bin_width_ms,
+        mi_lag_ms=args.mi_lag_ms,
         duration_ms=args.duration_ms,
         r_ee=args.r_ee,
     )

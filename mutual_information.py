@@ -362,31 +362,31 @@ def compute_mi_binary(x: np.ndarray, y: np.ndarray,
         mi /= max(h_x, h_y)
     return float(mi)
 
-def compute_mi_matrix(spike_trains: np.ndarray, entropy_normalize: bool = False) -> np.ndarray:
-    """
-    Compute mutual information matrix for a set of spike trains
-    """
-    n_neurons = spike_trains.shape[0]
-    mi_matrix = np.zeros((n_neurons, n_neurons), dtype=float)
+# def compute_mi_matrix(spike_trains: np.ndarray, entropy_normalize: bool = False) -> np.ndarray:
+#     """
+#     Compute mutual information matrix for a set of spike trains
+#     """
+#     n_neurons = spike_trains.shape[0]
+#     mi_matrix = np.zeros((n_neurons, n_neurons), dtype=float)
 
-    for i in range(n_neurons):
-        for j in range(i + 1, n_neurons):
-            mi = compute_mi_binary(spike_trains[i], 
-                                   spike_trains[j], 
-                                   entropy_normalize=entropy_normalize)
-            mi_matrix[i, j] = mi
-            mi_matrix[j, i] = mi
+#     for i in range(n_neurons):
+#         for j in range(i + 1, n_neurons):
+#             mi = compute_mi_binary(spike_trains[i], 
+#                                    spike_trains[j], 
+#                                    entropy_normalize=entropy_normalize)
+#             mi_matrix[i, j] = mi
+#             mi_matrix[j, i] = mi
 
-    return mi_matrix
+#     return mi_matrix
 
 
-def bin_spikes_and_compute_mi_matrix(spike_mon: SpikeMonitor,
-                                     bin_width_ms: float,
-                                     entropy_normalize: bool = False) -> np.ndarray:
-    """Bin spikes, binarize occupancy, then compute pairwise MI matrix."""
-    spike_counts = bin_spikes(spike_mon=spike_mon, bin_width_ms=bin_width_ms)
-    spike_binary = (spike_counts > 0).astype(np.int8)
-    return compute_mi_matrix(spike_binary, entropy_normalize=entropy_normalize)
+# def bin_spikes_and_compute_mi_matrix(spike_mon: SpikeMonitor,
+#                                      bin_width_ms: float,
+#                                      entropy_normalize: bool = False) -> np.ndarray:
+#     """Bin spikes, binarize occupancy, then compute pairwise MI matrix."""
+#     spike_counts = bin_spikes(spike_mon=spike_mon, bin_width_ms=bin_width_ms)
+#     spike_binary = (spike_counts > 0).astype(np.int8)
+#     return compute_mi_matrix(spike_binary, entropy_normalize=entropy_normalize)
 
 
 def bin_spikes_and_compute_mi_matrix_corrected(spike_mon: SpikeMonitor,
@@ -443,6 +443,40 @@ def bin_spikes_and_compute_mi_matrix_corrected(spike_mon: SpikeMonitor,
     mi_matrix[i_idx, j_idx] = mi_values
     mi_matrix[j_idx, i_idx] = mi_values
     return mi_matrix
+
+
+def bin_spike_events_and_compute_mi_matrix_corrected(
+    spike_i: np.ndarray,
+    spike_t_ms: np.ndarray,
+    n_neurons: int,
+    bin_width_ms: float,
+    n_null: int = 100,
+    lag: int = 10,
+    method: str = 'plugin',
+) -> np.ndarray:
+    """Compute corrected MI from saved spike-event arrays via existing SpikeMonitor path."""
+
+    class _SpikeEventsAdapter:
+        def __init__(self, i_arr: np.ndarray, t_arr_ms: np.ndarray, n: int):
+            i_arr = np.asarray(i_arr, dtype=np.int64)
+            t_arr_ms = np.asarray(t_arr_ms, dtype=np.float64)
+            self.t = t_arr_ms * ms
+            self._spike_train_dict = {
+                idx: t_arr_ms[i_arr == idx] * ms
+                for idx in range(int(n))
+            }
+
+        def spike_trains(self):
+            return self._spike_train_dict
+
+    adapter = _SpikeEventsAdapter(spike_i, spike_t_ms, int(n_neurons))
+    return bin_spikes_and_compute_mi_matrix_corrected(
+        spike_mon=adapter,
+        bin_width_ms=bin_width_ms,
+        n_null=n_null,
+        lag=lag,
+        method=method,
+    )
 
 
 def save_mi_heatmap(mi_matrix: np.ndarray,
