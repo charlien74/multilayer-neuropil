@@ -264,6 +264,24 @@ def knn_functional_binary(mi_matrix: np.ndarray, k_val: int) -> np.ndarray:
     return func_bin
 
 
+def randomize_binary_network_preserve_degree(adj_bin: np.ndarray,
+                                             n_swaps: int | None = None,
+                                             seed: int | None = None) -> np.ndarray:
+    """Degree-preserving null model via double-edge swaps on the undirected binarized graph."""
+    undirected_adj = np.maximum(adj_bin, adj_bin.T)
+    np.fill_diagonal(undirected_adj, 0.0)
+    G = nx.from_numpy_array(undirected_adj)
+
+    n_edges = G.number_of_edges()
+    if n_swaps is None:
+        n_swaps = 10 * n_edges  # standard heuristic for adequate mixing
+
+    nx.double_edge_swap(G, nswap=n_swaps, max_tries=n_swaps * 10, seed=seed)
+
+    randomized_adj = nx.to_numpy_array(G, nodelist=range(adj_bin.shape[0]))
+    return np.where(randomized_adj != 0, 1.0, 0.0)
+
+
 def louvain_partition_labels_from_adj(adj_bin: np.ndarray,
                                       resolution: float = 1.0) -> np.ndarray:
     """Run Louvain on an undirected view of adjacency and return integer labels per node."""
