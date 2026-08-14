@@ -264,11 +264,12 @@ def knn_functional_binary(mi_matrix: np.ndarray, k_val: int) -> np.ndarray:
     return func_bin
 
 
-def louvain_partition_labels_from_adj(adj_bin: np.ndarray) -> np.ndarray:
+def louvain_partition_labels_from_adj(adj_bin: np.ndarray,
+                                      resolution: float = 1.0) -> np.ndarray:
     """Run Louvain on an undirected view of adjacency and return integer labels per node."""
     undirected_adj = np.maximum(adj_bin, adj_bin.T)
     G = nx.from_numpy_array(undirected_adj)
-    communities = nx.community.louvain_communities(G, weight='weight', seed=0)
+    communities = nx.community.louvain_communities(G, weight='weight', resolution=resolution, seed=0)
 
     labels = np.full(G.number_of_nodes(), -1, dtype=np.int32)
     for comm_idx, comm_nodes in enumerate(communities):
@@ -326,6 +327,7 @@ def append_results_row(
     layer_weight_decay_lambda: float,
     radius_um: float,
     k_used_knn: int,
+    louvain_resolution: float,
     louvain_nmi: float,
     structural_a_functional_a: float,
     structural_b_functional_b: float,
@@ -340,6 +342,7 @@ def append_results_row(
         'layer_weight_decay_lambda',
         'radius_um',
         'k_used_knn',
+        'louvain_resolution',
         'louvain_nmi',
         'structural_a_functional_a',
         'structural_b_functional_b',
@@ -361,6 +364,7 @@ def append_results_row(
             f"{layer_weight_decay_lambda:.6f}",
             f"{radius_um:.6f}",
             str(int(k_used_knn)),
+            f"{louvain_resolution:.6f}",
             f"{louvain_nmi:.6f}",
             f"{structural_a_functional_a:.6f}",
             f"{structural_b_functional_b:.6f}",
@@ -381,6 +385,7 @@ def run_analysis(
     recompute_mi_from_spikes: bool,
     mi_bin_width_ms: float,
     mi_lag_ms: float,
+    louvain_resolution: float,
 ) -> None:
     mi_a_path = output_internal_dir / 'mi_matrix_multilayer_readout_exc.npz'
     mi_b_path = output_internal_dir / 'mi_matrix_neuropil_readout_exc.npz'
@@ -419,8 +424,8 @@ def run_analysis(
     functional_a_bin = knn_functional_binary(mi_a, k_eff)
     functional_b_bin = knn_functional_binary(mi_b, k_eff)
 
-    louvain_labels_a = louvain_partition_labels_from_adj(functional_a_bin)
-    louvain_labels_b = louvain_partition_labels_from_adj(functional_b_bin)
+    louvain_labels_a = louvain_partition_labels_from_adj(functional_a_bin, resolution=louvain_resolution)
+    louvain_labels_b = louvain_partition_labels_from_adj(functional_b_bin, resolution=louvain_resolution)
     louvain_nmi = normalized_mutual_information(louvain_labels_a, louvain_labels_b)
 
     sim_struct_a_func_a = float(deltacon_similarity_from_adj(structural_bin, functional_a_bin))
@@ -437,6 +442,7 @@ def run_analysis(
         layer_weight_decay_lambda=float(layer_weight_decay_lambda),
         radius_um=float(radius_um),
         k_used_knn=int(k_eff),
+        louvain_resolution=float(louvain_resolution),
         louvain_nmi=float(louvain_nmi),
         structural_a_functional_a=sim_struct_a_func_a,
         structural_b_functional_b=sim_struct_b_func_b,
@@ -488,6 +494,12 @@ def main():
         default=10.0,
         help='Lag window (ms) used when recomputing MI from saved spikes.',
     )
+    parser.add_argument(
+        '--louvain-resolution',
+        type=float,
+        default=1.0,
+        help='Resolution parameter for Louvain community detection in network_analysis.py.',
+    )
     args = parser.parse_args()
 
     if args.duration_ms <= 0.0:
@@ -512,6 +524,7 @@ def main():
         recompute_mi_from_spikes=bool(args.recompute_mi_from_spikes),
         mi_bin_width_ms=float(args.mi_bin_width_ms),
         mi_lag_ms=float(args.mi_lag_ms),
+        louvain_resolution=float(args.louvain_resolution),
     )
 
 

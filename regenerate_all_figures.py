@@ -9,7 +9,7 @@ def run_step(cmd, label):
     subprocess.run(cmd, check=True)
 
 
-def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi_bin_width_ms, mi_lag_ms, duration_ms, r_ee):
+def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi_bin_width_ms, mi_lag_ms, duration_ms, r_ee, louvain_resolution):
     repo_root = Path(__file__).resolve().parent
     python_exec = sys.executable
 
@@ -74,6 +74,9 @@ def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi
             str(duration_ms),
             '--mi-lag-ms',
             str(mi_lag_ms),
+            '--louvain-resolution',
+            str(louvain_resolution),
+
         ],
         '3/3 network analysis',
     )
@@ -134,6 +137,12 @@ if __name__ == '__main__':
         default=2.0,
         help='R_ee metadata value recorded by network analysis output.',
     )
+    parser.add_argument(
+        '--louvain-resolution',
+        type=float,
+        default=1.0,
+        help='Resolution parameter for Louvain community detection in network_analysis.py.',
+    )
     args = parser.parse_args()
     if args.mi_bin_width_ms <= 0.0:
         raise ValueError('--mi-bin-width-ms must be positive.')
@@ -150,4 +159,5 @@ if __name__ == '__main__':
         mi_lag_ms=args.mi_lag_ms,
         duration_ms=args.duration_ms,
         r_ee=args.r_ee,
+        louvain_resolution=args.louvain_resolution,
     )
