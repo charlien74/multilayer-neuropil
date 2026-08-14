@@ -1,5 +1,6 @@
 import argparse
 import csv
+from dataclasses import dataclass
 from pathlib import Path
 
 import networkx as nx
@@ -296,11 +297,34 @@ def louvain_partition_labels_from_adj(adj_bin: np.ndarray,
 
     if np.any(labels < 0):
         raise RuntimeError('Louvain did not assign all nodes to communities.')
-    return labels, len(communities)
+    return labels, len(communities)  # also returns the number of communities
 
 
-def normalized_mutual_information(labels_a: np.ndarray, labels_b: np.ndarray) -> float:
-    """NMI = 2I(A;B) / (H(A) + H(B)) using natural log."""
+@dataclass(frozen=True)
+class PartitionMI:
+    """Mutual-information statistics for a pair of node partitions, in nats."""
+
+    mi: float
+    entropy_a: float
+    entropy_b: float
+    partition_size_a: int 
+    partition_size_b: int
+
+    @property
+    def mean_entropy(self) -> float:
+        return (self.entropy_a + self.entropy_b) / 2.0
+
+    @property
+    def normalized_mi(self) -> float:
+        denom = self.mean_entropy
+        if denom <= 0.0:
+            return 1.0 if self.mi == 0.0 and self.entropy_a == self.entropy_b else 0.0
+        return self.mi / denom
+
+
+def partition_mutual_information(labels_a: np.ndarray, labels_b: np.ndarray,
+                                 ) -> PartitionMI:
+    """Compute mutual information and marginal entropies using natural log."""
     if labels_a.shape != labels_b.shape:
         raise ValueError('Partition label arrays must have identical shape.')
 
@@ -328,12 +352,38 @@ def normalized_mutual_information(labels_a: np.ndarray, labels_b: np.ndarray) ->
     nz_b = p_b > 0.0
     h_a = float(-np.sum(p_a[nz_a] * np.log(p_a[nz_a])))
     h_b = float(-np.sum(p_b[nz_b] * np.log(p_b[nz_b])))
+    return PartitionMI(mi=mi, entropy_a=h_a, entropy_b=h_b,
+                       partition_size_a=n_a, partition_size_b=n_b)
 
-    denom = h_a + h_b
+    
+def adjusted_mutual_information(functional_a_bin: np.ndarray, 
+                                functional_b_bin: np.ndarray,
+                                louvain_resolution: float,
+                                n_null: int) -> float:
+    if n_null <= 0:
+        raise ValueError('n_null must be positive.')
+
+    labels_a, _ = louvain_partition_labels_from_adj(functional_a_bin, 
+                                                    resolution=louvain_resolution)
+    labels_b, _ = louvain_partition_labels_from_adj(functional_b_bin, 
+                                                    resolution=louvain_resolution)
+    observed = partition_mutual_information(labels_a, labels_b)
+
+    expected_mi = 0.0
+    for _ in range(n_null):
+        a_bin_randomized = randomize_binary_network_preserve_degree(functional_a_bin, seed=None)
+        b_bin_randomized = randomize_binary_network_preserve_degree(functional_b_bin, seed=None)
+        labels_a_randomized, _ = louvain_partition_labels_from_adj(a_bin_randomized, 
+                                                                  resolution=louvain_resolution)
+        labels_b_randomized, _ = louvain_partition_labels_from_adj(b_bin_randomized, 
+                                                                  resolution=louvain_resolution)
+        expected_mi += partition_mutual_information(labels_a_randomized, labels_b_randomized).mi
+    expected_mi /= n_null
+
+    denom = observed.mean_entropy - expected_mi
     if denom <= 0.0:
         return 1.0 if np.array_equal(labels_a, labels_b) else 0.0
-    return float(2.0 * mi / denom)
-
+    return float((observed.mi - expected_mi) / denom)
 
 def append_results_row(
     output_path: Path,
@@ -349,6 +399,7 @@ def append_results_row(
     n_communities_a: int,
     n_communities_b: int,
     louvain_nmi: float,
+    louvain_adjusted_mi: float,
     structural_a_functional_a: float,
     structural_b_functional_b: float,
     functional_a_functional_b: float,
@@ -366,6 +417,7 @@ def append_results_row(
         'n_communities_a',
         'n_communities_b',
         'louvain_nmi',
+        'louvain_adjusted_mi',
         'structural_a_functional_a',
         'structural_b_functional_b',
         'functional_a_functional_b',
@@ -450,7 +502,9 @@ def run_analysis(
 
     louvain_labels_a, n_communities_a = louvain_partition_labels_from_adj(functional_a_bin, resolution=louvain_resolution)
     louvain_labels_b, n_communities_b = louvain_partition_labels_from_adj(functional_b_bin, resolution=louvain_resolution)
-    louvain_nmi = normalized_mutual_information(louvain_labels_a, louvain_labels_b)
+    louvain_nmi = partition_mutual_information(louvain_labels_a, louvain_labels_b).normalized_mi
+
+    louvain_adjusted_mi = adjusted_mutual_information(functional_a_bin, functional_b_bin, louvain_resolution=louvain_resolution, n_null=500)
 
     sim_struct_a_func_a = float(deltacon_similarity_from_adj(structural_bin, functional_a_bin))
     sim_struct_b_func_b = float(deltacon_similarity_from_adj(structural_bin, functional_b_bin))
@@ -470,6 +524,7 @@ def run_analysis(
         n_communities_a=int(n_communities_a),
         n_communities_b=int(n_communities_b),
         louvain_nmi=float(louvain_nmi),
+        louvain_adjusted_mi=float(louvain_adjusted_mi),
         structural_a_functional_a=sim_struct_a_func_a,
         structural_b_functional_b=sim_struct_b_func_b,
         functional_a_functional_b=sim_func_a_func_b,
