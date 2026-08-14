@@ -278,7 +278,7 @@ def louvain_partition_labels_from_adj(adj_bin: np.ndarray,
 
     if np.any(labels < 0):
         raise RuntimeError('Louvain did not assign all nodes to communities.')
-    return labels
+    return labels, len(communities)
 
 
 def normalized_mutual_information(labels_a: np.ndarray, labels_b: np.ndarray) -> float:
@@ -328,6 +328,8 @@ def append_results_row(
     radius_um: float,
     k_used_knn: int,
     louvain_resolution: float,
+    n_communities_a: int,
+    n_communities_b: int,
     louvain_nmi: float,
     structural_a_functional_a: float,
     structural_b_functional_b: float,
@@ -343,6 +345,8 @@ def append_results_row(
         'radius_um',
         'k_used_knn',
         'louvain_resolution',
+        'n_communities_a',
+        'n_communities_b',
         'louvain_nmi',
         'structural_a_functional_a',
         'structural_b_functional_b',
@@ -365,6 +369,8 @@ def append_results_row(
             f"{radius_um:.6f}",
             str(int(k_used_knn)),
             f"{louvain_resolution:.6f}",
+            str(int(n_communities_a)),
+            str(int(n_communities_b)),
             f"{louvain_nmi:.6f}",
             f"{structural_a_functional_a:.6f}",
             f"{structural_b_functional_b:.6f}",
@@ -424,8 +430,8 @@ def run_analysis(
     functional_a_bin = knn_functional_binary(mi_a, k_eff)
     functional_b_bin = knn_functional_binary(mi_b, k_eff)
 
-    louvain_labels_a = louvain_partition_labels_from_adj(functional_a_bin, resolution=louvain_resolution)
-    louvain_labels_b = louvain_partition_labels_from_adj(functional_b_bin, resolution=louvain_resolution)
+    louvain_labels_a, n_communities_a = louvain_partition_labels_from_adj(functional_a_bin, resolution=louvain_resolution)
+    louvain_labels_b, n_communities_b = louvain_partition_labels_from_adj(functional_b_bin, resolution=louvain_resolution)
     louvain_nmi = normalized_mutual_information(louvain_labels_a, louvain_labels_b)
 
     sim_struct_a_func_a = float(deltacon_similarity_from_adj(structural_bin, functional_a_bin))
@@ -443,6 +449,8 @@ def run_analysis(
         radius_um=float(radius_um),
         k_used_knn=int(k_eff),
         louvain_resolution=float(louvain_resolution),
+        n_communities_a=int(n_communities_a),
+        n_communities_b=int(n_communities_b),
         louvain_nmi=float(louvain_nmi),
         structural_a_functional_a=sim_struct_a_func_a,
         structural_b_functional_b=sim_struct_b_func_b,
