@@ -8,7 +8,9 @@ import numpy as np
 from numpy.linalg import inv
 from scipy import sparse
 
-from mutual_information import bin_spike_events_and_compute_mi_matrix_corrected
+from mutual_information import \
+    bin_spike_events_and_compute_mi_matrix_corrected, \
+    estimate_distance_based_mi
 
 
 def deltacon_similarity_from_adj(A1: np.ndarray, 
@@ -138,10 +140,11 @@ def load_spike_events(npz_path: Path) -> tuple[np.ndarray, np.ndarray, int]:
             )
         spike_i = np.asarray(z['exc_spike_i'], dtype=np.int64)
         spike_t_ms = np.asarray(z['exc_spike_t_ms'], dtype=np.float64)
+        readout_positions_um = np.asarray(z['readout_positions_um'])
         if 'n_readout_exc' not in z:
             raise KeyError(f"Spike file {npz_path} must contain 'n_readout_exc'.")
         n_neurons = int(np.asarray(z['n_readout_exc']).item())
-    return spike_i, spike_t_ms, n_neurons
+    return spike_i, spike_t_ms, readout_positions_um, n_neurons
 
 
 def save_mi_matrix_npz(mi_matrix: np.ndarray, output_path: Path, bin_width_ms: float) -> None:
@@ -172,8 +175,8 @@ def recompute_mi_matrices_from_spikes(
             f"Missing neuropil spike artifact: {neuropil_spikes_path}"
         )
 
-    multi_i, multi_t, multi_n = load_spike_events(multilayer_spikes_path)
-    neuro_i, neuro_t, neuro_n = load_spike_events(neuropil_spikes_path)
+    multi_i, multi_t, _, multi_n = load_spike_events(multilayer_spikes_path)
+    neuro_i, neuro_t, _, neuro_n = load_spike_events(neuropil_spikes_path)
 
     lag_bins = max(0, int(np.round(float(lag_ms) / float(bin_width_ms))))
 
@@ -403,6 +406,8 @@ def append_results_row(
     structural_a_functional_a: float,
     structural_b_functional_b: float,
     functional_a_functional_b: float,
+    distance_based_mi: float,
+    distance_based_mi_h: int,
 ) -> None:
     header = [
         'duration_ms',
@@ -421,6 +426,8 @@ def append_results_row(
         'structural_a_functional_a',
         'structural_b_functional_b',
         'functional_a_functional_b',
+        'distance_based_mi',
+        'distance_based_mi_h',
     ]
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -442,9 +449,12 @@ def append_results_row(
             str(int(n_communities_a)),
             str(int(n_communities_b)),
             f"{louvain_nmi:.6f}",
+            f"{louvain_adjusted_mi:.6f}",
             f"{structural_a_functional_a:.6f}",
             f"{structural_b_functional_b:.6f}",
             f"{functional_a_functional_b:.6f}",
+            f"{distance_based_mi:.6f}",
+            str(int(distance_based_mi_h)),
         ])
 
 
@@ -462,6 +472,7 @@ def run_analysis(
     mi_bin_width_ms: float,
     mi_lag_ms: float,
     louvain_resolution: float,
+    distance_based_mi_h: int,
 ) -> None:
     mi_a_path = output_internal_dir / 'mi_matrix_multilayer_readout_exc.npz'
     mi_b_path = output_internal_dir / 'mi_matrix_neuropil_readout_exc.npz'
@@ -510,6 +521,36 @@ def run_analysis(
     sim_struct_b_func_b = float(deltacon_similarity_from_adj(structural_bin, functional_b_bin))
     sim_func_a_func_b = float(deltacon_similarity_from_adj(functional_a_bin, functional_b_bin))
 
+    # Distance-based MI between models
+    multilayer_spikes_path = input_internal_dir / 'multilayer_readout_spikes.npz'
+    neuropil_spikes_path = input_internal_dir / 'readout_layer_simulation.npz'
+
+    multi_i, multi_t, multi_positions_um, multi_n = load_spike_events(multilayer_spikes_path)
+    neuro_i, neuro_t, neuro_positions_um, neuro_n = load_spike_events(neuropil_spikes_path)
+
+    if multi_n != neuro_n:
+        raise ValueError("Multilayer and Neuropil models expected to have same number of neurons.")
+
+    db_window_ms = 45.0
+    db_dt_ms = 1.0
+    db_tau_ms = 50.0
+    db_spatial_sigma_um = 20.0 # Mirroring sigma_c from multilayer
+
+
+    distance_based_mi = estimate_distance_based_mi(multi_i,
+                                                   multi_t,
+                                                   multi_positions_um,
+                                                   neuro_i,
+                                                   neuro_t,
+                                                   neuro_positions_um,
+                                                   multi_n,
+                                                   window_ms=db_window_ms,
+                                                   dt_ms=db_dt_ms,
+                                                   tau_ms=db_tau_ms,
+                                                   spatial_sigma_um=db_spatial_sigma_um,
+                                                   h=distance_based_mi_h)
+
+
     append_results_row(
         output_path=output_path,
         duration_ms=float(duration_ms),
@@ -528,6 +569,8 @@ def run_analysis(
         structural_a_functional_a=sim_struct_a_func_a,
         structural_b_functional_b=sim_struct_b_func_b,
         functional_a_functional_b=sim_func_a_func_b,
+        distance_based_mi=distance_based_mi['mi_corrected_bits'],
+        distance_based_mi_h=distance_based_mi_h
     )
 
     print(f"Readout average degree (structural): {avg_degree:.6f}")
@@ -581,6 +624,12 @@ def main():
         default=1.0,
         help='Resolution parameter for Louvain community detection in network_analysis.py.',
     )
+    parser.add_argument(
+        '--distance-based-mi-h',
+        default=10,
+        type=int,
+        help='Parameter for distance-based MI metric.'
+    )
     args = parser.parse_args()
 
     if args.duration_ms <= 0.0:
@@ -606,6 +655,7 @@ def main():
         mi_bin_width_ms=float(args.mi_bin_width_ms),
         mi_lag_ms=float(args.mi_lag_ms),
         louvain_resolution=float(args.louvain_resolution),
+        distance_based_mi_h=int(args.distance_based_mi_h),
     )
 
 

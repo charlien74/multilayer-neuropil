@@ -17,40 +17,6 @@ def get_spike_monitor_positions_um(spike_mon: SpikeMonitor) -> np.ndarray:
     return np.column_stack((x_um, y_um))
 
 
-def build_binned_spike_counts(spike_mon: SpikeMonitor,
-                              dt_ms: float,
-                              t_start_ms: float | None = None,
-                              t_stop_ms: float | None = None) -> tuple[np.ndarray, float, float, float]:
-    """Bin spikes into a dense occupancy matrix (N neurons x T bins)."""
-    if dt_ms <= 0:
-        raise ValueError('dt_ms must be > 0.')
-
-    n_neurons = len(spike_mon.count)
-    spike_t_ms = np.asarray(spike_mon.t / ms, dtype=float)
-
-    if t_start_ms is None:
-        t_start_ms = float(spike_t_ms.min()) if spike_t_ms.size else 0.0
-    if t_stop_ms is None:
-        t_stop_ms = float(spike_t_ms.max()) if spike_t_ms.size else float(t_start_ms + dt_ms)
-    if t_stop_ms <= t_start_ms:
-        t_stop_ms = t_start_ms + dt_ms
-
-    spike_train_dict = spike_mon.spike_trains()
-    spike_time_list = [
-        np.asarray(spike_train_dict[i] / ms, dtype=np.float64)
-        for i in range(n_neurons)
-    ]
-    counts = bin_population(
-        spike_time_list,
-        t_start=t_start_ms,
-        t_stop=t_stop_ms,
-        dt=dt_ms,
-        clip=1,
-    ).astype(np.float32)
-
-    return counts, float(t_start_ms), float(t_stop_ms), float(dt_ms)
-
-
 def split_count_matrix_into_windows(counts: np.ndarray,
                                     window_ms: float,
                                     dt_ms: float) -> np.ndarray:
@@ -162,7 +128,10 @@ def apply_temporal_kernel(window_counts: np.ndarray,
     return smoothed
 
 
-def build_spatiotemporal_window_features(spike_mon: SpikeMonitor,
+def build_spatiotemporal_window_features(spike_i: np.ndarray,
+                                         spike_t_ms: np.ndarray,
+                                         positions_um: np.ndarray,
+                                         n_neurons: int,
                                          window_ms: float,
                                          dt_ms: float,
                                          tau_ms: float,
@@ -170,30 +139,54 @@ def build_spatiotemporal_window_features(spike_mon: SpikeMonitor,
                                          t_start_ms: float | None = None,
                                          t_stop_ms: float | None = None) -> dict:
     """Build flattened FA(x,t)-like features per window from a SpikeMonitor."""
-    positions_um = get_spike_monitor_positions_um(spike_mon)
-    counts, t0, t1, dt = build_binned_spike_counts(
-        spike_mon,
-        dt_ms=dt_ms,
-        t_start_ms=t_start_ms,
-        t_stop_ms=t_stop_ms,
+    spike_i = np.asarray(spike_i, dtype=np.int64)
+    spike_t_ms = np.asarray(spike_t_ms, dtype=np.float64)
+
+    if spike_i.shape != spike_t_ms.shape:
+        raise ValueError("spike_i and spike_t_ms must have the same shape.")
+
+    spike_time_list = [
+        spike_t_ms[spike_i == neuron_idx]
+        for neuron_idx in range(n_neurons)
+    ]
+
+    # Bin population: shape (n_neurons, n_time_bins)
+    counts = bin_population(
+        spike_time_list,
+        t_start=t_start_ms,
+        t_stop=t_stop_ms,
+        dt=dt_ms,
+        clip=1,
     )
-    windows = split_count_matrix_into_windows(counts, window_ms=window_ms, dt_ms=dt)
+
     k_spatial = build_spatial_kernel(positions_um, spatial_sigma_um=spatial_sigma_um)
 
-    feats = []
-    for w in windows:
-        temporal = apply_temporal_kernel(w, dt_ms=dt, tau_ms=tau_ms)
-        spatial_temporal = k_spatial @ temporal
-        feats.append(spatial_temporal.reshape(-1))
+    temporal = apply_temporal_kernel(
+        counts,
+        dt_ms=dt_ms,
+        tau_ms=tau_ms,
+    )
 
-    features = np.asarray(feats, dtype=np.float32)
+    spatial_temporal = k_spatial @ temporal
+
+    windows = split_count_matrix_into_windows(
+        spatial_temporal,
+        window_ms=window_ms,
+        dt_ms=dt_ms,
+    )
+
+    features = np.asarray(
+        [w.reshape(-1) for w in windows],
+        dtype=np.float32,
+    )
+
     return {
         'features': features,
         'positions_um': positions_um,
-        'dt_ms': float(dt),
+        'dt_ms': float(dt_ms),
         'window_ms': float(window_ms),
-        't_start_ms': float(t0),
-        't_stop_ms': float(t1),
+        't_start_ms': float(t_start_ms),
+        't_stop_ms': float(t_stop_ms),
     }
 
 
@@ -212,7 +205,7 @@ def pairwise_l2_distance_matrix(features: np.ndarray) -> np.ndarray:
 
 def k_nearest_neighbor_sets(distance_matrix: np.ndarray,
                             h: int) -> list[set[int]]:
-    """Return k-nearest-neighbor index sets per sample (excluding self)."""
+    """Return k-nearest-neighbor index sets per sample (including self)."""
     d = np.asarray(distance_matrix, dtype=np.float64)
     if d.ndim != 2 or d.shape[0] != d.shape[1]:
         raise ValueError('distance_matrix must be square.')
@@ -220,12 +213,11 @@ def k_nearest_neighbor_sets(distance_matrix: np.ndarray,
         raise ValueError('h must be > 0.')
 
     n = d.shape[0]
-    k = min(h, n - 1)
     neighbors = []
     for i in range(n):
         row = d[i].copy()
-        row[i] = np.inf
-        idx = np.argpartition(row, k)[:k]
+        row[i] = 0.0
+        idx = np.argpartition(row, h)[:h]
         neighbors.append(set(int(v) for v in idx))
     return neighbors
 
@@ -245,10 +237,11 @@ def estimate_distance_based_mi_from_distance_matrices(distance_a: np.ndarray,
     if n < 2:
         raise ValueError('Need at least two samples/windows for MI estimation.')
 
-    neigh_a = k_nearest_neighbor_sets(da, h=h)
-    neigh_b = k_nearest_neighbor_sets(db, h=h)
     if not h < n:
         raise ValueError('Need h less than the number of windows for estimator to make sense.')
+
+    neigh_a = k_nearest_neighbor_sets(da, h=h)
+    neigh_b = k_nearest_neighbor_sets(db, h=h)
 
     intersections = np.zeros(n, dtype=np.int32)
     for i in range(n):
@@ -280,20 +273,24 @@ def estimate_distance_based_mi_from_distance_matrices(distance_a: np.ndarray,
     }
 
 
-def estimate_distance_based_mi_from_spike_monitors(spike_mon_a: SpikeMonitor,
-                                                   spike_mon_b: SpikeMonitor,
-                                                   window_ms: float,
-                                                   dt_ms: float,
-                                                   tau_ms: float,
-                                                   spatial_sigma_um: float,
-                                                   h: int,
-                                                   pseudo_count: int = 1,
-                                                   t_start_ms: float | None = None,
-                                                   t_stop_ms: float | None = None) -> dict:
+def estimate_distance_based_mi(spike_i_a: np.ndarray,
+                               spike_t_ms_a: np.ndarray,
+                               positions_um_a: np.ndarray,
+                               spike_i_b: np.ndarray,
+                               spike_t_ms_b: np.ndarray,
+                               positions_um_b: np.ndarray,
+                               n_neurons: int,
+                               window_ms: float,
+                               dt_ms: float,
+                               tau_ms: float,
+                               spatial_sigma_um: float,
+                               h: int,
+                               t_start_ms: float | None = None,
+                               t_stop_ms: float | None = None) -> dict:
     """End-to-end distance-based MI estimate between two SpikeMonitor recordings."""
     if t_start_ms is None or t_stop_ms is None:
-        ta = np.asarray(spike_mon_a.t / ms, dtype=float)
-        tb = np.asarray(spike_mon_b.t / ms, dtype=float)
+        ta = np.asarray(spike_t_ms_a, dtype=float)
+        tb = np.asarray(spike_t_ms_b, dtype=float)
         if t_start_ms is None:
             starts = []
             if ta.size:
@@ -310,7 +307,10 @@ def estimate_distance_based_mi_from_spike_monitors(spike_mon_a: SpikeMonitor,
             t_stop_ms = max(stops) if stops else float(t_start_ms + dt_ms)
 
     feats_a = build_spatiotemporal_window_features(
-        spike_mon_a,
+        spike_i_a,
+        spike_t_ms_a,
+        positions_um_a,
+        n_neurons,
         window_ms=window_ms,
         dt_ms=dt_ms,
         tau_ms=tau_ms,
@@ -319,7 +319,10 @@ def estimate_distance_based_mi_from_spike_monitors(spike_mon_a: SpikeMonitor,
         t_stop_ms=t_stop_ms,
     )
     feats_b = build_spatiotemporal_window_features(
-        spike_mon_b,
+        spike_i_b,
+        spike_t_ms_b,
+        positions_um_b,
+        n_neurons,
         window_ms=window_ms,
         dt_ms=dt_ms,
         tau_ms=tau_ms,
@@ -337,59 +340,12 @@ def estimate_distance_based_mi_from_spike_monitors(spike_mon_a: SpikeMonitor,
 
     d_a = pairwise_l2_distance_matrix(fa)
     d_b = pairwise_l2_distance_matrix(fb)
-    est = estimate_distance_based_mi_from_distance_matrices(
+    return estimate_distance_based_mi_from_distance_matrices(
         d_a,
         d_b,
         h=h
     )
 
-    return {
-        'mi_bits': est['mi_bits'],
-        'terms_bits': est['terms_bits'],
-        'intersection_counts': est['intersection_counts'],
-        'k_effective': est['k_effective'],
-        'n_windows': int(n_windows),
-        'distance_matrix_a': d_a,
-        'distance_matrix_b': d_b,
-        'features_a': fa,
-        'features_b': fb,
-        'params': {
-            'window_ms': float(window_ms),
-            'dt_ms': float(dt_ms),
-            'tau_ms': float(tau_ms),
-            'spatial_sigma_um': float(spatial_sigma_um),
-            'h': int(h),
-            'pseudo_count': int(pseudo_count),
-            't_start_ms': float(t_start_ms),
-            't_stop_ms': float(t_stop_ms),
-        },
-    }
-
-def bin_spikes(spike_mon: SpikeMonitor,
-               bin_width_ms: float) -> np.ndarray:
-    if bin_width_ms <= 0:
-        raise ValueError("bin_width_ms must be > 0.")
-
-    n_neurons = len(spike_mon.count)
-    spike_neuron_ids = np.asarray(spike_mon.i, dtype=np.int64)
-    spike_times_ms = np.asarray(spike_mon.t / ms, dtype=float)
-
-    if spike_times_ms.size == 0:
-        return np.zeros((n_neurons, 1), dtype=np.int32)
-
-    n_bins = int(np.floor(spike_times_ms.max() / bin_width_ms)) + 1
-    binned_spikes = np.zeros((n_neurons, n_bins), dtype=np.int32)
-
-    bin_ids = np.floor(spike_times_ms / bin_width_ms).astype(np.int64)
-    valid = (
-        (spike_neuron_ids >= 0)
-        & (spike_neuron_ids < n_neurons)
-        & (bin_ids >= 0)
-        & (bin_ids < n_bins)
-    )
-    np.add.at(binned_spikes, (spike_neuron_ids[valid], bin_ids[valid]), 1)
-
-    return binned_spikes
 
 def compute_mi_binary(x: np.ndarray, y: np.ndarray,
                       entropy_normalize: bool = False) -> float:

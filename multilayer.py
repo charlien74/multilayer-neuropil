@@ -357,13 +357,28 @@ with open('output/public/S_hat_values.txt', 'w') as f:
     for layer_i in range(N_layers):
         f.write(f"{layer_i},{S_hat_list[layer_i]:.6f}\n")
 
-# Persist readout excitatory spike events for downstream MI recomputation.
-readout_exc_spike_i = np.asarray(spike_mon_exc[N_layers - 1].i[:], dtype=np.int32)
-readout_exc_spike_t_ms = np.asarray(spike_mon_exc[N_layers - 1].t[:] / ms, dtype=np.float32)
+# Persist readout excitatory spike events and geometry
+# for downstream MI recomputation.
+readout_exc_spike_i = np.asarray(
+    spike_mon_exc[N_layers - 1].i[:],
+    dtype=np.int32,
+)
+
+readout_exc_spike_t_ms = np.asarray(
+    spike_mon_exc[N_layers - 1].t[:] / ms,
+    dtype=np.float32,
+)
+
+readout_exc_positions_um = np.asarray(
+    layers[N_layers - 1]["positions_um"],
+    dtype=np.float32,
+)
+
 np.savez_compressed(
     'output/internal/multilayer_readout_spikes.npz',
     exc_spike_i=readout_exc_spike_i,
     exc_spike_t_ms=readout_exc_spike_t_ms,
+    readout_positions_um=readout_exc_positions_um,
     n_readout_exc=np.int32(len(spike_mon_exc[N_layers - 1].count)),
     duration_ms=np.float32(float(duration / ms)),
 )
