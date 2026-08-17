@@ -407,6 +407,8 @@ def append_results_row(
     structural_b_functional_b: float,
     functional_a_functional_b: float,
     distance_based_mi: float,
+    distance_based_mi_null: float,
+    distance_based_mi_corrected: float,
     distance_based_mi_h: int,
 ) -> None:
     header = [
@@ -427,6 +429,8 @@ def append_results_row(
         'structural_b_functional_b',
         'functional_a_functional_b',
         'distance_based_mi',
+        'distance_based_mi_null',
+        'distance_based_mi_corrected',
         'distance_based_mi_h',
     ]
 
@@ -454,6 +458,8 @@ def append_results_row(
             f"{structural_b_functional_b:.6f}",
             f"{functional_a_functional_b:.6f}",
             f"{distance_based_mi:.6f}",
+            f"{distance_based_mi_null:.6f}",
+            f"{distance_based_mi_corrected:.6f}",
             str(int(distance_based_mi_h)),
         ])
 
@@ -569,7 +575,9 @@ def run_analysis(
         structural_a_functional_a=sim_struct_a_func_a,
         structural_b_functional_b=sim_struct_b_func_b,
         functional_a_functional_b=sim_func_a_func_b,
-        distance_based_mi=distance_based_mi['mi_corrected_bits'],
+        distance_based_mi=distance_based_mi['mi_bits'],
+        distance_based_mi_null=distance_based_mi['mi_null_bits'],
+        distance_based_mi_corrected=distance_based_mi['mi_corrected_bits'],
         distance_based_mi_h=distance_based_mi_h
     )
 
