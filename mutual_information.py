@@ -2,6 +2,7 @@ from brian2 import SpikeMonitor, ms
 from matplotlib.colors import LogNorm
 import matplotlib.pyplot as plt
 import numpy as np
+import math
 from pathlib import Path
 from util.spike_mi import *
 
@@ -75,38 +76,89 @@ def split_count_matrix_into_windows(counts: np.ndarray,
 
 def build_spatial_kernel(positions_um: np.ndarray,
                          spatial_sigma_um: float) -> np.ndarray:
-    """Build row-normalized squared-exponential spatial kernel matrix."""
+    """
+    Build a squared-exponential spatial kernel matrix.
+
+    K[i, j] gives the contribution of neuron j to the activity field
+    evaluated at neuron i's spatial location.
+
+    The kernel is not row-normalized: densely populated / highly active
+    regions therefore naturally produce larger field amplitudes.
+    """
     if spatial_sigma_um <= 0:
-        raise ValueError('spatial_sigma_um must be > 0.')
+        raise ValueError("spatial_sigma_um must be > 0.")
 
     positions = np.asarray(positions_um, dtype=np.float32)
+
     if positions.ndim != 2 or positions.shape[1] != 2:
-        raise ValueError('positions_um must have shape (N, 2).')
+        raise ValueError("positions_um must have shape (N, 2).")
 
     dx = positions[:, 0][:, None] - positions[:, 0][None, :]
     dy = positions[:, 1][:, None] - positions[:, 1][None, :]
     sqdist = dx * dx + dy * dy
 
-    k = np.exp(-sqdist / float(spatial_sigma_um * spatial_sigma_um), dtype=np.float32)
-    row_sums = np.sum(k, axis=1, keepdims=True)
-    row_sums[row_sums <= 0.0] = 1.0
-    return (k / row_sums).astype(np.float32)
+    sigma2 = float(spatial_sigma_um ** 2)
+
+    k = np.exp(
+        -sqdist / (2.0 * sigma2)
+    ).astype(np.float32)
+
+    return k
 
 
 def apply_temporal_kernel(window_counts: np.ndarray,
                           dt_ms: float,
-                          tau_ms: float) -> np.ndarray:
-    """Apply causal exponential temporal smoothing to one window (N x T)."""
+                          tau_ms: float,
+                          normalize: bool = True) -> np.ndarray:
+    """
+    Apply causal exponential smoothing to a full recording.
+
+    Implements the discrete analogue of
+
+        k_t(t, t_s)
+            = H(t - t_s) exp(-(t - t_s) / tau)
+
+    or, if normalize=True,
+
+        k_t(t, t_s)
+            = (1 / tau) H(t - t_s) exp(-(t - t_s) / tau).
+
+    Parameters
+    ----------
+    counts : (N, T) array
+        Spike counts for N neurons across T time bins.
+    dt_ms : float
+        Width of each time bin in ms.
+    tau_ms : float
+        Temporal decay constant in ms.
+    normalize : bool
+        If True, multiply each spike contribution by 1 / tau_ms.
+    """
+    if dt_ms <= 0:
+        raise ValueError("dt_ms must be > 0.")
     if tau_ms <= 0:
-        raise ValueError('tau_ms must be > 0.')
+        raise ValueError("tau_ms must be > 0.")
 
     counts = np.asarray(window_counts, dtype=np.float32)
-    smoothed = np.zeros_like(counts)
-    alpha = float(np.exp(-dt_ms / tau_ms))
 
-    smoothed[:, 0] = counts[:, 0]
+    if counts.ndim != 2:
+        raise ValueError("counts must have shape (N, T).")
+    if counts.shape[1] == 0:
+        raise ValueError("counts must contain at least one time bin.")
+
+    smoothed = np.zeros_like(counts)
+
+    alpha = float(np.exp(-dt_ms / tau_ms))
+    scale = 1.0 / tau_ms if normalize else 1.0
+
+    smoothed[:, 0] = scale * counts[:, 0]
+
     for t in range(1, counts.shape[1]):
-        smoothed[:, t] = alpha * smoothed[:, t - 1] + counts[:, t]
+        smoothed[:, t] = (
+            alpha * smoothed[:, t - 1]
+            + scale * counts[:, t]
+        )
+
     return smoothed
 
 
@@ -180,8 +232,7 @@ def k_nearest_neighbor_sets(distance_matrix: np.ndarray,
 
 def estimate_distance_based_mi_from_distance_matrices(distance_a: np.ndarray,
                                                       distance_b: np.ndarray,
-                                                      h: int,
-                                                      pseudo_count: int = 1) -> dict:
+                                                      h: int) -> dict:
     """Estimate MI using nearest-neighbor set intersections (Houghton-style)."""
     da = np.asarray(distance_a, dtype=np.float64)
     db = np.asarray(distance_b, dtype=np.float64)
@@ -193,27 +244,39 @@ def estimate_distance_based_mi_from_distance_matrices(distance_a: np.ndarray,
     n = da.shape[0]
     if n < 2:
         raise ValueError('Need at least two samples/windows for MI estimation.')
-    if pseudo_count < 0:
-        raise ValueError('pseudo_count must be >= 0.')
 
     neigh_a = k_nearest_neighbor_sets(da, h=h)
     neigh_b = k_nearest_neighbor_sets(db, h=h)
-    k_eff = min(h, n - 1)
+    if not h < n:
+        raise ValueError('Need h less than the number of windows for estimator to make sense.')
 
     intersections = np.zeros(n, dtype=np.int32)
     for i in range(n):
         intersections[i] = len(neigh_a[i].intersection(neigh_b[i]))
 
-    adjusted = intersections.astype(np.float64) + float(pseudo_count)
-    terms = np.log2((n * adjusted) / float(k_eff * k_eff))
+    if np.any(intersections == 0):
+        raise ValueError(
+            "Zero nearest-neighbor intersections encountered. "
+            "Increase h or use the bias-corrected estimator."
+        )
+
+    intersections = intersections.astype(np.float64)
+    terms = np.log2((n * intersections) / float(h * h))
     mi_bits = float(np.mean(terms))
+
+    mi_null = 0
+    for r in range(1, h + 1):
+        prob = (math.comb(h - 1, r - 1) * math.comb(n - h, h - r)) / math.comb(n - 1, h - 1)
+        if prob > 0:
+            mi_null += prob * np.log2((n * r) / float(h * h))
 
     return {
         'mi_bits': mi_bits,
-        'terms_bits': terms,
+        'mi_null_bits': mi_null,
+        'mi_corrected_bits': mi_bits - mi_null,
         'intersection_counts': intersections,
-        'k_effective': int(k_eff),
-        'n_samples': int(n),
+        'h': h,
+        'n_windows': int(n),
     }
 
 
@@ -277,8 +340,7 @@ def estimate_distance_based_mi_from_spike_monitors(spike_mon_a: SpikeMonitor,
     est = estimate_distance_based_mi_from_distance_matrices(
         d_a,
         d_b,
-        h=h,
-        pseudo_count=pseudo_count,
+        h=h
     )
 
     return {
