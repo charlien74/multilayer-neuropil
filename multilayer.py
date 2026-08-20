@@ -375,6 +375,15 @@ mi_matrix_multilayer = save_mi_outputs(
     heatmap_output_png=str(output_public_dir / 'mi_heatmap_multilayer_readout_exc.png'),
     title='Multilayer readout excitatory MI heatmap',
 )
+readout_spike_monitor = spike_mon_exc[N_layers - 1]
+np.savez_compressed(
+    output_internal_dir / 'multilayer_readout_spikes.npz',
+    exc_spike_i=np.asarray(readout_spike_monitor.i[:], dtype=np.int32),
+    exc_spike_t_ms=np.asarray(readout_spike_monitor.t[:] / ms, dtype=np.float32),
+    n_readout_exc=np.int32(readout_positions_um.shape[0]),
+    readout_positions_um=readout_positions_um,
+)
+print(f"Saved multilayer readout spikes to {output_internal_dir / 'multilayer_readout_spikes.npz'}")
 print(
     'Saved multilayer MI matrix '
     f"{mi_matrix_multilayer.shape} -> {output_internal_dir / 'mi_matrix_multilayer_readout_exc.npz'}"
