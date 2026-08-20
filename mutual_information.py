@@ -497,6 +497,97 @@ def bin_spike_events_and_compute_mi_matrix_corrected(
     )
 
 
+def save_spatial_region_mi_outputs(
+    spike_i: np.ndarray,
+    spike_t_ms: np.ndarray,
+    positions_um: np.ndarray,
+    n_regions: int,
+    spatial_radius_um: float,
+    bin_width_ms: float,
+    matrix_output_npz: str,
+    heatmap_output_png: str,
+    title: str,
+    n_null: int = 100,
+    lag: int = 10,
+    method: str = 'grass',
+    clip: int = 255,
+    t_start_ms: float | None = None,
+    t_stop_ms: float | None = None,
+) -> np.ndarray:
+    """Compute and save MI between equal-area spatial regions from spike events."""
+    spike_i = np.asarray(spike_i, dtype=np.int64)
+    spike_t_ms = np.asarray(spike_t_ms, dtype=np.float64)
+    positions_um = np.asarray(positions_um, dtype=np.float64)
+
+    if spike_i.shape != spike_t_ms.shape:
+        raise ValueError('spike_i and spike_t_ms must have the same shape.')
+    if positions_um.ndim != 2 or positions_um.shape[1] != 2:
+        raise ValueError('positions_um must have shape (n_neurons, 2).')
+    if np.any(spike_i < 0) or np.any(spike_i >= positions_um.shape[0]):
+        raise ValueError('spike_i contains an index outside positions_um.')
+    if n_regions <= 0 or int(np.sqrt(n_regions)) ** 2 != n_regions:
+        raise ValueError('n_regions must be a positive perfect square.')
+    if spatial_radius_um <= 0:
+        raise ValueError('spatial_radius_um must be positive.')
+    if clip <= 0 or clip > 255:
+        raise ValueError('clip must be between 1 and 255.')
+
+    side = int(np.sqrt(n_regions))
+    lower = -float(spatial_radius_um)
+    span = 2.0 * float(spatial_radius_um)
+    normalized = (positions_um - lower) / span
+    normalized = np.clip(normalized, 0.0, 1.0)
+    columns = np.minimum((normalized[:, 0] * side).astype(int), side - 1)
+    rows = np.minimum((normalized[:, 1] * side).astype(int), side - 1)
+    region_ids = rows * side + columns
+
+    region_spike_times = [
+        spike_t_ms[np.isin(spike_i, np.flatnonzero(region_ids == region))].copy()
+        for region in range(n_regions)
+    ]
+
+    if t_start_ms is None:
+        t_start_ms = float(spike_t_ms.min()) if spike_t_ms.size else 0.0
+    if t_stop_ms is None:
+        t_stop_ms = float(spike_t_ms.max() + bin_width_ms) if spike_t_ms.size else float(t_start_ms + bin_width_ms)
+
+    regional_states = bin_population(
+        region_spike_times,
+        t_start=t_start_ms,
+        t_stop=t_stop_ms,
+        dt=bin_width_ms,
+        clip=clip,
+    )
+    result = mi_pairs(
+        regional_states,
+        n_null=n_null,
+        lag=lag,
+    )
+    method_index = tuple(result['methods']).index(method)
+    mi_matrix = np.zeros((n_regions, n_regions), dtype=float)
+    pairs = np.asarray(result['pairs'], dtype=np.int64)
+    mi_values = np.asarray(result['mi_corrected'][:, method_index], dtype=float)
+    mi_matrix[pairs[:, 0], pairs[:, 1]] = mi_values
+    mi_matrix[pairs[:, 1], pairs[:, 0]] = mi_values
+
+    matrix_out = Path(matrix_output_npz)
+    matrix_out.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        matrix_out,
+        mi_matrix=mi_matrix.astype(np.float32),
+        bin_width_ms=np.float32(bin_width_ms),
+        n_regions=np.int32(n_regions),
+        clip=np.int32(clip),
+    )
+    save_mi_heatmap(
+        mi_matrix=mi_matrix,
+        output_path=heatmap_output_png,
+        lognorm=False,
+        title=title,
+    )
+    return mi_matrix
+
+
 def save_mi_heatmap(mi_matrix: np.ndarray,
                     output_path: str,
                     lognorm: bool = False,
