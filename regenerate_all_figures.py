@@ -24,17 +24,18 @@ def main(
 ):
     repo_root = Path(__file__).resolve().parent
     python_exec = sys.executable
-    output_dir = Path(output_dir)
-    if not output_dir.is_absolute():
-        output_dir = repo_root / output_dir
-    output_public_dir = output_dir / 'public'
-    output_internal_dir = output_dir / 'internal'
+    output_subdir = Path(output_dir)
+    if output_subdir.is_absolute():
+        raise ValueError('--output-dir must be a relative subdirectory.')
+    output_public_dir = repo_root / 'output' / 'public' / output_subdir
+    output_internal_dir = repo_root / 'output' / 'internal' / output_subdir
     output_public_dir.mkdir(parents=True, exist_ok=True)
     output_internal_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Using Python interpreter: {python_exec}")
     print(f"Repository root: {repo_root}")
-    print(f"Output root: {output_dir}")
+    print(f"Output public directory: {output_public_dir}")
+    print(f"Output internal directory: {output_internal_dir}")
     print("Regenerating all figures with fresh multilayer internal data...")
 
     run_step(
@@ -181,8 +182,8 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--output-dir',
-        default='output',
-        help='Run-specific output root. Public figures go in <output-dir>/public and intermediate files go in <output-dir>/internal.',
+        default='.',
+        help='Optional relative run subdirectory under output/public and output/internal.',
     )
     args = parser.parse_args()
     if args.mi_bin_width_ms <= 0.0:
