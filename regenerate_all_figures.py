@@ -16,6 +16,7 @@ def main(
     summary_dt_ms,
     mi_bin_width_ms,
     mi_lag_ms,
+    distance_based_mi_h,
     duration_ms,
     r_ee,
     louvain_resolution,
@@ -103,6 +104,8 @@ def main(
             str(mi_lag_ms),
             '--louvain-resolution',
             str(louvain_resolution),
+            '--distance-based-mi-h',
+            str(distance_based_mi_h),
 
         ],
         '3/3 network analysis',
@@ -153,6 +156,12 @@ if __name__ == '__main__':
         help='Lag window (ms) used when network_analysis recomputes MI from saved spikes.',
     )
     parser.add_argument(
+        '--distance-based-mi-h',
+        type=int,
+        default=10,
+        help='Neighborhood size used by the distance-based MI metric.',
+    )
+    parser.add_argument(
         '--duration-ms',
         type=float,
         default=2000.0,
@@ -180,6 +189,8 @@ if __name__ == '__main__':
         raise ValueError('--mi-bin-width-ms must be positive.')
     if args.mi_lag_ms < 0.0:
         raise ValueError('--mi-lag-ms must be non-negative.')
+    if args.distance_based_mi_h <= 0:
+        raise ValueError('--distance-based-mi-h must be positive.')
     if args.duration_ms <= 0.0:
         raise ValueError('--duration-ms must be positive.')
     main(
@@ -189,6 +200,7 @@ if __name__ == '__main__':
         summary_dt_ms=args.summary_dt_ms,
         mi_bin_width_ms=args.mi_bin_width_ms,
         mi_lag_ms=args.mi_lag_ms,
+        distance_based_mi_h=args.distance_based_mi_h,
         duration_ms=args.duration_ms,
         r_ee=args.r_ee,
         louvain_resolution=args.louvain_resolution,
