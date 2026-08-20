@@ -286,6 +286,7 @@ def mi_pairs(states, pairs=None, K=None, lag=0, n_null=0, tables=None,
         res["null_sd"] = null_sd * scale
         res["mi_corrected"] = (mi - null_mean) * scale
         res["p"] = (1.0 + null_ge) / (1.0 + n_null)
+        res["z_score"] = (mi - null_mean) / np.maximum(null_sd, 1e-12)
     return res
 
 
