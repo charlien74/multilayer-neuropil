@@ -619,18 +619,38 @@ def save_readout_simulation_outputs(
 	)
 
 
-def main(radius_um=10.0, layer_weight_decay_lambda=1.0, mi_bin_width_ms=10.0):
+def main(
+	radius_um=10.0,
+	layer_weight_decay_lambda=1.0,
+	mi_bin_width_ms=10.0,
+	output_public_dir='output/public',
+	output_internal_dir='output/internal',
+):
+	output_public_dir = Path(output_public_dir)
+	output_internal_dir = Path(output_internal_dir)
+	output_public_dir.mkdir(parents=True, exist_ok=True)
+	output_internal_dir.mkdir(parents=True, exist_ok=True)
+
 	bundle, readout_tensor, neighborhood = generate_readout_tensor_from_file(
 		radius_um=radius_um,
 		layer_weight_decay_lambda=layer_weight_decay_lambda,
+		input_npz=output_internal_dir / 'lower_layer_voltage_raw.npz',
+		output_npz=output_internal_dir / 'readout_avg_radius.npz',
+		neighborhood_npz=output_internal_dir / 'readout_neighborhood_radius.npz',
 	)
 	result = build_uniform_readout_layer(bundle, readout_tensor)
-	save_readout_simulation_outputs(result, readout_tensor, bundle, radius_um)
+	save_readout_simulation_outputs(
+		result,
+		readout_tensor,
+		bundle,
+		radius_um,
+		output_npz=output_internal_dir / 'readout_layer_simulation.npz',
+	)
 	mi_matrix_neuropil = save_mi_outputs(
 		spike_mon=result['spike_mon_exc'],
 		bin_width_ms=mi_bin_width_ms,
-		matrix_output_npz='output/internal/mi_matrix_neuropil_readout_exc.npz',
-		heatmap_output_png='output/public/mi_heatmap_neuropil_readout_exc.png',
+		matrix_output_npz=str(output_internal_dir / 'mi_matrix_neuropil_readout_exc.npz'),
+		heatmap_output_png=str(output_public_dir / 'mi_heatmap_neuropil_readout_exc.png'),
 		title='Neuropil readout excitatory MI heatmap',
 	)
 	plot_proxy_column_raster(
@@ -639,10 +659,12 @@ def main(radius_um=10.0, layer_weight_decay_lambda=1.0, mi_bin_width_ms=10.0):
 		readout_positions_um=bundle['readout_positions_um'],
 		readout_tensor=readout_tensor,
 		time_ms=bundle['time_ms'],
+		output_path=output_public_dir / 'neuropil_readout_raster.png',
 	)
 	plot_proxy_column_spatial_band_mapping(
 		result['proxy_column_ids'],
 		bundle['readout_positions_um'],
+		output_path=output_public_dir / 'neuropil_proxy_column_mapping.png',
 	)
 
 	neighbor_counts = np.diff(neighborhood.indptr)
@@ -679,11 +701,11 @@ def main(radius_um=10.0, layer_weight_decay_lambda=1.0, mi_bin_width_ms=10.0):
 	)
 	print(
 		'Saved neuropil MI matrix '
-		f"{mi_matrix_neuropil.shape} -> output/internal/mi_matrix_neuropil_readout_exc.npz"
+		f"{mi_matrix_neuropil.shape} -> {output_internal_dir / 'mi_matrix_neuropil_readout_exc.npz'}"
 	)
-	print('Saved: output/public/neuropil_readout_raster.png')
-	print('Saved: output/public/neuropil_proxy_column_mapping.png')
-	print('Saved: output/public/mi_heatmap_neuropil_readout_exc.png')
+	print(f"Saved: {output_public_dir / 'neuropil_readout_raster.png'}")
+	print(f"Saved: {output_public_dir / 'neuropil_proxy_column_mapping.png'}")
+	print(f"Saved: {output_public_dir / 'mi_heatmap_neuropil_readout_exc.png'}")
 
 
 if __name__ == '__main__':
@@ -707,6 +729,16 @@ if __name__ == '__main__':
 		default=2000.0,
 		help='Simulation duration in milliseconds.',
 	)
+	parser.add_argument(
+		'--output-public-dir',
+		default='output/public',
+		help='Directory for public figure/text outputs.',
+	)
+	parser.add_argument(
+		'--output-internal-dir',
+		default='output/internal',
+		help='Directory for internal intermediate outputs.',
+	)
 	args = parser.parse_args()
 	if args.mi_bin_width_ms <= 0.0:
 		raise ValueError('--mi-bin-width-ms must be positive.')
@@ -717,4 +749,6 @@ if __name__ == '__main__':
 		radius_um=args.radius_um,
 		layer_weight_decay_lambda=args.layer_weight_decay_lambda,
 		mi_bin_width_ms=args.mi_bin_width_ms,
+		output_public_dir=args.output_public_dir,
+		output_internal_dir=args.output_internal_dir,
 	)

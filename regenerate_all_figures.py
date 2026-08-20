@@ -9,12 +9,31 @@ def run_step(cmd, label):
     subprocess.run(cmd, check=True)
 
 
-def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi_bin_width_ms, mi_lag_ms, duration_ms, r_ee, louvain_resolution):
+def main(
+    radius_um,
+    layer_weight_decay_lambda,
+    summary_signal,
+    summary_dt_ms,
+    mi_bin_width_ms,
+    mi_lag_ms,
+    duration_ms,
+    r_ee,
+    louvain_resolution,
+    output_dir,
+):
     repo_root = Path(__file__).resolve().parent
     python_exec = sys.executable
+    output_dir = Path(output_dir)
+    if not output_dir.is_absolute():
+        output_dir = repo_root / output_dir
+    output_public_dir = output_dir / 'public'
+    output_internal_dir = output_dir / 'internal'
+    output_public_dir.mkdir(parents=True, exist_ok=True)
+    output_internal_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Using Python interpreter: {python_exec}")
     print(f"Repository root: {repo_root}")
+    print(f"Output root: {output_dir}")
     print("Regenerating all figures with fresh multilayer internal data...")
 
     run_step(
@@ -32,6 +51,10 @@ def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi
             str(mi_bin_width_ms),
             '--duration-ms',
             str(duration_ms),
+            '--output-public-dir',
+            str(output_public_dir),
+            '--output-internal-dir',
+            str(output_internal_dir),
         ],
         '1/3 multilayer',
     )
@@ -47,6 +70,10 @@ def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi
             str(mi_bin_width_ms),
             '--duration-ms',
             str(duration_ms),
+            '--output-public-dir',
+            str(output_public_dir),
+            '--output-internal-dir',
+            str(output_internal_dir),
         ],
         '2/3 neuropil',
     )
@@ -55,11 +82,11 @@ def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi
             python_exec,
             str(repo_root / 'network_analysis.py'),
             '--input-internal-dir',
-            str(repo_root / 'output' / 'internal'),
+            str(output_internal_dir),
             '--output-internal-dir',
-            str(repo_root / 'output' / 'internal'),
+            str(output_internal_dir),
             '--output-file',
-            str(repo_root / 'output' / 'public' / 'network_compare_results.txt'),
+            str(output_public_dir / 'network_compare_results.txt'),
             '--r-ee',
             str(r_ee),
             '--summary-signal',
@@ -82,7 +109,7 @@ def main(radius_um, layer_weight_decay_lambda, summary_signal, summary_dt_ms, mi
     )
 
     print("\nDone.")
-    print("Fresh outputs were generated in output/public and output/internal.")
+    print(f"Fresh outputs were generated in {output_public_dir} and {output_internal_dir}.")
 
 
 if __name__ == '__main__':
@@ -143,6 +170,11 @@ if __name__ == '__main__':
         default=1.0,
         help='Resolution parameter for Louvain community detection in network_analysis.py.',
     )
+    parser.add_argument(
+        '--output-dir',
+        default='output',
+        help='Run-specific output root. Public figures go in <output-dir>/public and intermediate files go in <output-dir>/internal.',
+    )
     args = parser.parse_args()
     if args.mi_bin_width_ms <= 0.0:
         raise ValueError('--mi-bin-width-ms must be positive.')
@@ -160,4 +192,5 @@ if __name__ == '__main__':
         duration_ms=args.duration_ms,
         r_ee=args.r_ee,
         louvain_resolution=args.louvain_resolution,
+        output_dir=args.output_dir,
     )

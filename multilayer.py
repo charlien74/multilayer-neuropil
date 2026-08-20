@@ -46,6 +46,16 @@ parser.add_argument(
     default=2.0,
     help='Community ratio parameter R_ee used by get_p_connection_in_out.',
 )
+parser.add_argument(
+    '--output-public-dir',
+    default='output/public',
+    help='Directory for public figure/text outputs.',
+)
+parser.add_argument(
+    '--output-internal-dir',
+    default='output/internal',
+    help='Directory for internal intermediate outputs.',
+)
 args = parser.parse_args()
 
 if args.summary_dt_ms <= 0.0:
@@ -56,6 +66,10 @@ if args.duration_ms <= 0.0:
     raise ValueError('--duration-ms must be positive.')
 
 set_simulation_duration_ms(args.duration_ms)
+output_public_dir = Path(args.output_public_dir)
+output_internal_dir = Path(args.output_internal_dir)
+output_public_dir.mkdir(parents=True, exist_ok=True)
+output_internal_dir.mkdir(parents=True, exist_ok=True)
 
 start_scope()
 seed(RANDOM_SEED)
@@ -316,9 +330,8 @@ time_ms = np.asarray(state_mon_exc_lower[0].t[:] / ms, dtype=np.float32)
 if time_ms.shape[0] > expected_samples:
     time_ms = time_ms[:expected_samples]
 
-Path('output/internal').mkdir(parents=True, exist_ok=True)
 np.savez_compressed(
-    'output/internal/lower_layer_voltage_raw.npz',
+    output_internal_dir / 'lower_layer_voltage_raw.npz',
     voltage_lower_exc=summary_tensor,
     summary_signal=np.asarray(args.summary_signal),
     summary_dt_ms=np.float32(args.summary_dt_ms),
@@ -350,9 +363,7 @@ for layer_i in range(N_layers):
     print(f"S - <S_shuff>: {S_minus_Sshuff:.6f}")
     S_hat_list.append(S_minus_Sshuff)
 
-Path('output/public').mkdir(parents=True, exist_ok=True)
-
-with open('output/public/S_hat_values.txt', 'w') as f:
+with open(output_public_dir / 'S_hat_values.txt', 'w') as f:
     f.write("Layer,S_hat\n")
     for layer_i in range(N_layers):
         f.write(f"{layer_i},{S_hat_list[layer_i]:.6f}\n")
@@ -360,28 +371,28 @@ with open('output/public/S_hat_values.txt', 'w') as f:
 mi_matrix_multilayer = save_mi_outputs(
     spike_mon=spike_mon_exc[N_layers - 1],
     bin_width_ms=args.mi_bin_width_ms,
-    matrix_output_npz='output/internal/mi_matrix_multilayer_readout_exc.npz',
-    heatmap_output_png='output/public/mi_heatmap_multilayer_readout_exc.png',
+    matrix_output_npz=str(output_internal_dir / 'mi_matrix_multilayer_readout_exc.npz'),
+    heatmap_output_png=str(output_public_dir / 'mi_heatmap_multilayer_readout_exc.png'),
     title='Multilayer readout excitatory MI heatmap',
 )
 print(
     'Saved multilayer MI matrix '
-    f"{mi_matrix_multilayer.shape} -> output/internal/mi_matrix_multilayer_readout_exc.npz"
+    f"{mi_matrix_multilayer.shape} -> {output_internal_dir / 'mi_matrix_multilayer_readout_exc.npz'}"
 )
-print('Saved: output/public/mi_heatmap_multilayer_readout_exc.png')
+print(f"Saved: {output_public_dir / 'mi_heatmap_multilayer_readout_exc.png'}")
 
 
 # Save global adjacency matrix and layer offsets for downstream network analysis.
 adjacency_global, layer_index_info = extract_global_weighted_adjacency(layers, interlayer_synapses)
 np.savez_compressed(
-    'output/internal/adjacency_global_sparse.npz',
+    output_internal_dir / 'adjacency_global_sparse.npz',
     data=adjacency_global.data,
     indices=adjacency_global.indices,
     indptr=adjacency_global.indptr,
     shape=np.asarray(adjacency_global.shape, dtype=np.int64),
 )
 
-with open('output/internal/adjacency_global_layer_offsets.csv', 'w') as f:
+with open(output_internal_dir / 'adjacency_global_layer_offsets.csv', 'w') as f:
     f.write('layer,exc_offset,inh_offset,n_exc,n_inh\n')
     for layer_i, info in enumerate(layer_index_info):
         f.write(
@@ -908,39 +919,38 @@ fig.text(
 	va='bottom'
 )
 plt.tight_layout(rect=(0.0, 0.06, 0.96, 1.0))
-plt.savefig('output/public/spatial_and_raster_all_layers.png', dpi=300)
+plt.savefig(output_public_dir / 'spatial_and_raster_all_layers.png', dpi=300)
 
-Path('output/public').mkdir(parents=True, exist_ok=True)
 plot_multilayer_3d_structure(
     layers,
     interlayer_synapses,
-    output_path='output/public/spatial_structure_3d_columns.png',
+    output_path=output_public_dir / 'spatial_structure_3d_columns.png',
 )
 
 plot_uniform_layer_proxy_columns(
     layers,
-    output_path='output/public/uniform_layer_proxy_columns.png',
+    output_path=output_public_dir / 'uniform_layer_proxy_columns.png',
     uniform_start_idx=uniform_layer_start,
 )
 
 plot_structured_and_uniform_proxy_pair(
     layers,
-    output_path='output/public/structured_vs_uniform_proxy_pair.png',
+    output_path=output_public_dir / 'structured_vs_uniform_proxy_pair.png',
     uniform_start_idx=uniform_layer_start,
 )
 
 plot_uniform_proxy_band_mapping(
     layers,
-    output_path='output/public/uniform_proxy_band_mapping.png',
+    output_path=output_public_dir / 'uniform_proxy_band_mapping.png',
     uniform_start_idx=uniform_layer_start,
 )
 
 
 
-print('Saved: output/public/spatial_structure_3d_columns.png')
-print('Saved: output/public/uniform_layer_proxy_columns.png')
-print('Saved: output/public/structured_vs_uniform_proxy_pair.png')
-print('Saved: output/public/uniform_proxy_band_mapping.png')
+print(f"Saved: {output_public_dir / 'spatial_structure_3d_columns.png'}")
+print(f"Saved: {output_public_dir / 'uniform_layer_proxy_columns.png'}")
+print(f"Saved: {output_public_dir / 'structured_vs_uniform_proxy_pair.png'}")
+print(f"Saved: {output_public_dir / 'uniform_proxy_band_mapping.png'}")
 if args.no_show:
     plt.close('all')
 else:
