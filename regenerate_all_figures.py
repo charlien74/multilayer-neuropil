@@ -1,4 +1,5 @@
 import argparse
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +18,9 @@ def main(
     mi_bin_width_ms,
     mi_lag_ms,
     distance_based_mi_h,
+    spatial_mi_regions,
+    spatial_mi_bin_width_ms,
+    spatial_mi_radius_um,
     duration_ms,
     r_ee,
     louvain_resolution,
@@ -107,6 +111,14 @@ def main(
             str(louvain_resolution),
             '--distance-based-mi-h',
             str(distance_based_mi_h),
+                        '--spatial-mi-bin-width-ms',
+                        str(spatial_mi_bin_width_ms),
+                        '--spatial-mi-radius-um',
+                        str(spatial_mi_radius_um),
+                        '--spatial-mi-output-file',
+                        str(output_public_dir / 'spatial_region_network_compare_results.csv'),
+                        *(['--spatial-mi-regions', *[str(m) for m in spatial_mi_regions]]
+                            if spatial_mi_regions else []),
 
         ],
         '3/3 network analysis',
@@ -163,6 +175,25 @@ if __name__ == '__main__':
         help='Neighborhood size used by the distance-based MI metric.',
     )
     parser.add_argument(
+        '--spatial-mi-regions',
+        type=int,
+        nargs='+',
+        default=None,
+        help='Perfect-square region counts for the optional spatial MI sweep.',
+    )
+    parser.add_argument(
+        '--spatial-mi-bin-width-ms',
+        type=float,
+        default=20.0,
+        help='Bin width (ms) for the optional spatial MI sweep.',
+    )
+    parser.add_argument(
+        '--spatial-mi-radius-um',
+        type=float,
+        default=100.0,
+        help='Fixed half-width (um) of the spatial MI grid.',
+    )
+    parser.add_argument(
         '--duration-ms',
         type=float,
         default=2000.0,
@@ -192,6 +223,14 @@ if __name__ == '__main__':
         raise ValueError('--mi-lag-ms must be non-negative.')
     if args.distance_based_mi_h <= 0:
         raise ValueError('--distance-based-mi-h must be positive.')
+    if args.spatial_mi_regions and any(
+        m < 4 or math.isqrt(m) ** 2 != m for m in args.spatial_mi_regions
+    ):
+        raise ValueError('--spatial-mi-regions must contain perfect squares >= 4.')
+    if args.spatial_mi_bin_width_ms <= 0.0:
+        raise ValueError('--spatial-mi-bin-width-ms must be positive.')
+    if args.spatial_mi_radius_um <= 0.0:
+        raise ValueError('--spatial-mi-radius-um must be positive.')
     if args.duration_ms <= 0.0:
         raise ValueError('--duration-ms must be positive.')
     main(
@@ -202,6 +241,9 @@ if __name__ == '__main__':
         mi_bin_width_ms=args.mi_bin_width_ms,
         mi_lag_ms=args.mi_lag_ms,
         distance_based_mi_h=args.distance_based_mi_h,
+        spatial_mi_regions=args.spatial_mi_regions,
+        spatial_mi_bin_width_ms=args.spatial_mi_bin_width_ms,
+        spatial_mi_radius_um=args.spatial_mi_radius_um,
         duration_ms=args.duration_ms,
         r_ee=args.r_ee,
         louvain_resolution=args.louvain_resolution,

@@ -10,7 +10,9 @@ from scipy import sparse
 
 from mutual_information import \
     bin_spike_events_and_compute_mi_matrix_corrected, \
-    estimate_distance_based_mi
+    estimate_distance_based_mi, \
+    save_spatial_region_mi_outputs, \
+    spatial_region_ids
 
 
 def deltacon_similarity_from_adj(A1: np.ndarray, 
@@ -259,6 +261,59 @@ def compute_avg_degree_from_structural(structural_adj: np.ndarray) -> float:
     return edge_count / float(n)
 
 
+def aggregate_structural_adjacency_by_regions(structural_adj: np.ndarray,
+                                              region_ids: np.ndarray,
+                                              n_regions: int) -> np.ndarray:
+    """Create a binary region-level adjacency if any neuron-level edge exists."""
+    structural_bin = np.asarray(structural_adj) != 0
+    region_adj = np.zeros((n_regions, n_regions), dtype=np.float64)
+    source_regions, target_regions = np.nonzero(structural_bin)
+    np.maximum.at(
+        region_adj,
+        (region_ids[source_regions], region_ids[target_regions]),
+        1.0,
+    )
+    np.fill_diagonal(region_adj, 0.0)
+    return region_adj
+
+
+def append_spatial_region_results(
+    output_path: Path,
+    n_regions: int,
+    bin_width_ms: float,
+    k_used_knn: int,
+    n_communities_a: int,
+    n_communities_b: int,
+    functional_a_functional_b: float,
+    louvain_adjusted_mi: float,
+) -> None:
+    """Append one regional-network comparison row to a dedicated CSV."""
+    header = [
+        'n_regions',
+        'spatial_mi_bin_width_ms',
+        'k_used_knn',
+        'n_communities_a',
+        'n_communities_b',
+        'functional_a_functional_b',
+        'louvain_adjusted_mi',
+    ]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = (not output_path.exists()) or output_path.stat().st_size == 0
+    with open(output_path, 'a', newline='') as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(header)
+        writer.writerow([
+            int(n_regions),
+            f'{bin_width_ms:.6f}',
+            int(k_used_knn),
+            int(n_communities_a),
+            int(n_communities_b),
+            f'{functional_a_functional_b:.6f}',
+            f'{louvain_adjusted_mi:.6f}',
+        ])
+
+
 def knn_functional_binary(mi_matrix: np.ndarray, k_val: int) -> np.ndarray:
     n = mi_matrix.shape[0]
     k_eff = max(1, min(int(k_val), n - 2))
@@ -479,6 +534,10 @@ def run_analysis(
     mi_lag_ms: float,
     louvain_resolution: float,
     distance_based_mi_h: int,
+    spatial_mi_regions: list[int] | None,
+    spatial_mi_bin_width_ms: float,
+    spatial_mi_radius_um: float,
+    spatial_mi_output_file: Path,
 ) -> None:
     mi_a_path = output_internal_dir / 'mi_matrix_multilayer_readout_exc.npz'
     mi_b_path = output_internal_dir / 'mi_matrix_neuropil_readout_exc.npz'
@@ -555,6 +614,79 @@ def run_analysis(
                                                    tau_ms=db_tau_ms,
                                                    spatial_sigma_um=db_spatial_sigma_um,
                                                    h=distance_based_mi_h)
+
+    if spatial_mi_regions:
+        for n_regions in spatial_mi_regions:
+            structural_region_ids = spatial_region_ids(
+                multi_positions_um,
+                n_regions=n_regions,
+                spatial_radius_um=spatial_mi_radius_um,
+            )
+            structural_region_adj = aggregate_structural_adjacency_by_regions(
+                structural_adj,
+                structural_region_ids,
+                n_regions,
+            )
+            regional_avg_degree = compute_avg_degree_from_structural(structural_region_adj)
+            regional_k = max(1, min(int(round(regional_avg_degree)), n_regions - 2))
+            regional_lag_bins = max(0, int(np.round(
+                float(mi_lag_ms) / float(spatial_mi_bin_width_ms)
+            )))
+            multi_region_mi = save_spatial_region_mi_outputs(
+                spike_i=multi_i,
+                spike_t_ms=multi_t,
+                positions_um=multi_positions_um,
+                n_regions=n_regions,
+                spatial_radius_um=spatial_mi_radius_um,
+                bin_width_ms=spatial_mi_bin_width_ms,
+                matrix_output_npz=output_internal_dir / f'mi_matrix_multilayer_regions_{n_regions}.npz',
+                heatmap_output_png=output_internal_dir / f'mi_heatmap_multilayer_regions_{n_regions}.png',
+                title=f'Multilayer regional MI (M={n_regions})',
+                lag=regional_lag_bins,
+                clip=255,
+            )
+            neuro_region_mi = save_spatial_region_mi_outputs(
+                spike_i=neuro_i,
+                spike_t_ms=neuro_t,
+                positions_um=neuro_positions_um,
+                n_regions=n_regions,
+                spatial_radius_um=spatial_mi_radius_um,
+                bin_width_ms=spatial_mi_bin_width_ms,
+                matrix_output_npz=output_internal_dir / f'mi_matrix_neuropil_regions_{n_regions}.npz',
+                heatmap_output_png=output_internal_dir / f'mi_heatmap_neuropil_regions_{n_regions}.png',
+                title=f'Neuropil regional MI (M={n_regions})',
+                lag=regional_lag_bins,
+                clip=255,
+            )
+            regional_a_bin = knn_functional_binary(multi_region_mi, regional_k)
+            regional_b_bin = knn_functional_binary(neuro_region_mi, regional_k)
+            regional_labels_a, regional_communities_a = louvain_partition_labels_from_adj(
+                regional_a_bin,
+                resolution=louvain_resolution,
+            )
+            regional_labels_b, regional_communities_b = louvain_partition_labels_from_adj(
+                regional_b_bin,
+                resolution=louvain_resolution,
+            )
+            regional_adjusted_mi = adjusted_mutual_information(
+                regional_a_bin,
+                regional_b_bin,
+                louvain_resolution=louvain_resolution,
+                n_null=500,
+            )
+            append_spatial_region_results(
+                output_path=spatial_mi_output_file,
+                n_regions=n_regions,
+                bin_width_ms=spatial_mi_bin_width_ms,
+                k_used_knn=regional_k,
+                n_communities_a=regional_communities_a,
+                n_communities_b=regional_communities_b,
+                functional_a_functional_b=deltacon_similarity_from_adj(
+                    regional_a_bin,
+                    regional_b_bin,
+                ),
+                louvain_adjusted_mi=regional_adjusted_mi,
+            )
 
 
     append_results_row(
@@ -638,6 +770,30 @@ def main():
         type=int,
         help='Parameter for distance-based MI metric.'
     )
+    parser.add_argument(
+        '--spatial-mi-regions',
+        type=int,
+        nargs='+',
+        default=None,
+        help='Perfect-square region counts for the optional spatial MI sweep.',
+    )
+    parser.add_argument(
+        '--spatial-mi-bin-width-ms',
+        type=float,
+        default=20.0,
+        help='Bin width (ms) for the optional spatial MI sweep.',
+    )
+    parser.add_argument(
+        '--spatial-mi-radius-um',
+        type=float,
+        default=100.0,
+        help='Fixed half-width (um) of the spatial MI grid.',
+    )
+    parser.add_argument(
+        '--spatial-mi-output-file',
+        default='output/public/spatial_region_network_compare_results.csv',
+        help='CSV path for optional spatial MI network comparisons.',
+    )
     args = parser.parse_args()
 
     if args.duration_ms <= 0.0:
@@ -648,6 +804,14 @@ def main():
         raise ValueError('--mi-bin-width-ms must be positive.')
     if args.mi_lag_ms < 0.0:
         raise ValueError('--mi-lag-ms must be non-negative.')
+    if args.spatial_mi_regions and any(
+        m < 4 or int(np.sqrt(m)) ** 2 != m for m in args.spatial_mi_regions
+    ):
+        raise ValueError('--spatial-mi-regions must contain perfect squares >= 4.')
+    if args.spatial_mi_bin_width_ms <= 0.0:
+        raise ValueError('--spatial-mi-bin-width-ms must be positive.')
+    if args.spatial_mi_radius_um <= 0.0:
+        raise ValueError('--spatial-mi-radius-um must be positive.')
 
     run_analysis(
         input_internal_dir=Path(args.input_internal_dir),
@@ -664,6 +828,10 @@ def main():
         mi_lag_ms=float(args.mi_lag_ms),
         louvain_resolution=float(args.louvain_resolution),
         distance_based_mi_h=int(args.distance_based_mi_h),
+        spatial_mi_regions=args.spatial_mi_regions,
+        spatial_mi_bin_width_ms=float(args.spatial_mi_bin_width_ms),
+        spatial_mi_radius_um=float(args.spatial_mi_radius_um),
+        spatial_mi_output_file=Path(args.spatial_mi_output_file),
     )
 
 

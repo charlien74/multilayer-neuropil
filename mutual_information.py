@@ -497,6 +497,26 @@ def bin_spike_events_and_compute_mi_matrix_corrected(
     )
 
 
+def spatial_region_ids(positions_um: np.ndarray,
+                       n_regions: int,
+                       spatial_radius_um: float) -> np.ndarray:
+    """Assign positions to an equal-area square grid centered at the origin."""
+    positions = np.asarray(positions_um, dtype=np.float64)
+    if positions.ndim != 2 or positions.shape[1] != 2:
+        raise ValueError('positions_um must have shape (n_neurons, 2).')
+    if n_regions <= 0 or int(np.sqrt(n_regions)) ** 2 != n_regions:
+        raise ValueError('n_regions must be a positive perfect square.')
+    if spatial_radius_um <= 0.0:
+        raise ValueError('spatial_radius_um must be positive.')
+
+    side = int(np.sqrt(n_regions))
+    normalized = (positions + float(spatial_radius_um)) / (2.0 * float(spatial_radius_um))
+    normalized = np.clip(normalized, 0.0, 1.0)
+    columns = np.minimum((normalized[:, 0] * side).astype(int), side - 1)
+    rows = np.minimum((normalized[:, 1] * side).astype(int), side - 1)
+    return rows * side + columns
+
+
 def save_spatial_region_mi_outputs(
     spike_i: np.ndarray,
     spike_t_ms: np.ndarray,
@@ -532,14 +552,11 @@ def save_spatial_region_mi_outputs(
     if clip <= 0 or clip > 255:
         raise ValueError('clip must be between 1 and 255.')
 
-    side = int(np.sqrt(n_regions))
-    lower = -float(spatial_radius_um)
-    span = 2.0 * float(spatial_radius_um)
-    normalized = (positions_um - lower) / span
-    normalized = np.clip(normalized, 0.0, 1.0)
-    columns = np.minimum((normalized[:, 0] * side).astype(int), side - 1)
-    rows = np.minimum((normalized[:, 1] * side).astype(int), side - 1)
-    region_ids = rows * side + columns
+    region_ids = spatial_region_ids(
+        positions_um,
+        n_regions=n_regions,
+        spatial_radius_um=spatial_radius_um,
+    )
 
     region_spike_times = [
         spike_t_ms[np.isin(spike_i, np.flatnonzero(region_ids == region))].copy()
