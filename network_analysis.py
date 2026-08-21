@@ -11,8 +11,7 @@ from scipy import sparse
 from mutual_information import \
     bin_spike_events_and_compute_mi_matrix_corrected, \
     estimate_distance_based_mi, \
-    save_spatial_region_mi_outputs, \
-    spatial_region_ids
+    save_spatial_region_mi_outputs
 
 
 def deltacon_similarity_from_adj(A1: np.ndarray, 
@@ -261,25 +260,22 @@ def compute_avg_degree_from_structural(structural_adj: np.ndarray) -> float:
     return edge_count / float(n)
 
 
-def aggregate_structural_adjacency_by_regions(structural_adj: np.ndarray,
-                                              region_ids: np.ndarray,
-                                              n_regions: int) -> np.ndarray:
-    """Create a binary region-level adjacency if any neuron-level edge exists."""
-    structural_bin = np.asarray(structural_adj) != 0
-    region_adj = np.zeros((n_regions, n_regions), dtype=np.float64)
-    source_regions, target_regions = np.nonzero(structural_bin)
-    np.maximum.at(
-        region_adj,
-        (region_ids[source_regions], region_ids[target_regions]),
-        1.0,
-    )
-    np.fill_diagonal(region_adj, 0.0)
-    return region_adj
+def compute_structural_density(structural_adj: np.ndarray) -> float:
+    """Compute directed structural edge density excluding self-connections."""
+    structural_bin = np.where(np.asarray(structural_adj) != 0, 1.0, 0.0)
+    if structural_bin.ndim != 2 or structural_bin.shape[0] != structural_bin.shape[1]:
+        raise ValueError('structural_adj must be square.')
+    n = structural_bin.shape[0]
+    if n < 2:
+        raise ValueError('structural_adj must contain at least two nodes.')
+    np.fill_diagonal(structural_bin, 0.0)
+    return float(np.sum(structural_bin) / (n * (n - 1)))
 
 
 def append_spatial_region_results(
     output_path: Path,
     n_regions: int,
+    structural_density: float,
     bin_width_ms: float,
     k_used_knn: int,
     n_communities_a: int,
@@ -290,6 +286,7 @@ def append_spatial_region_results(
     """Append one regional-network comparison row to a dedicated CSV."""
     header = [
         'n_regions',
+        'structural_density',
         'spatial_mi_bin_width_ms',
         'k_used_knn',
         'n_communities_a',
@@ -305,6 +302,7 @@ def append_spatial_region_results(
             writer.writerow(header)
         writer.writerow([
             int(n_regions),
+            f'{structural_density:.8f}',
             f'{bin_width_ms:.6f}',
             int(k_used_knn),
             int(n_communities_a),
@@ -585,6 +583,7 @@ def run_analysis(
     sim_struct_a_func_a = float(deltacon_similarity_from_adj(structural_bin, functional_a_bin))
     sim_struct_b_func_b = float(deltacon_similarity_from_adj(structural_bin, functional_b_bin))
     sim_func_a_func_b = float(deltacon_similarity_from_adj(functional_a_bin, functional_b_bin))
+    structural_density = compute_structural_density(structural_adj)
 
     # Distance-based MI between models
     multilayer_spikes_path = input_internal_dir / 'multilayer_readout_spikes.npz'
@@ -617,18 +616,11 @@ def run_analysis(
 
     if spatial_mi_regions:
         for n_regions in spatial_mi_regions:
-            structural_region_ids = spatial_region_ids(
-                multi_positions_um,
-                n_regions=n_regions,
-                spatial_radius_um=spatial_mi_radius_um,
-            )
-            structural_region_adj = aggregate_structural_adjacency_by_regions(
-                structural_adj,
-                structural_region_ids,
-                n_regions,
-            )
-            regional_avg_degree = compute_avg_degree_from_structural(structural_region_adj)
-            regional_k = max(1, min(int(round(regional_avg_degree)), n_regions - 2))
+            regional_k = max(1, int(round(0.25 * (n_regions - 1))))
+            # regional_k = max(
+            #     1,
+            #     min(int(round(structural_density * (n_regions - 1))), n_regions - 2),
+            # )
             regional_lag_bins = max(0, int(np.round(
                 float(mi_lag_ms) / float(spatial_mi_bin_width_ms)
             )))
@@ -677,6 +669,7 @@ def run_analysis(
             append_spatial_region_results(
                 output_path=spatial_mi_output_file,
                 n_regions=n_regions,
+                structural_density=structural_density,
                 bin_width_ms=spatial_mi_bin_width_ms,
                 k_used_knn=regional_k,
                 n_communities_a=regional_communities_a,
