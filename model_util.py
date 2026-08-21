@@ -3,6 +3,14 @@ from brian2 import *
 RANDOM_SEED = 2
 # Simulation settings
 defaultclock.dt = 0.1 * ms
+duration_ms = 2000.0
+duration = duration_ms * ms
+
+def set_simulation_duration_ms(value_ms):
+	"""Update the shared simulation duration used by the scripts."""
+	global duration_ms, duration
+	duration_ms = float(value_ms)
+	duration = duration_ms * ms
 
 N_exc_c = 320
 N_inh = 700 
