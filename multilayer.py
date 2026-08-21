@@ -364,6 +364,7 @@ for layer_i in range(N_layers):
         spike_t_exc_ms,
         layers[layer_i]['cluster_ids'],
         group_size=N_exc_c,
+        duration_ms=args.duration_ms,
         bin_size_ms=100.0,
         n_shuffles=10
     )

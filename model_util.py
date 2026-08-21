@@ -2,16 +2,7 @@ from brian2 import *
 
 RANDOM_SEED = 2
 # Simulation settings
-duration_ms = 2000.0
-duration = duration_ms * ms
 defaultclock.dt = 0.1 * ms
-
-
-def set_simulation_duration_ms(value_ms):
-	"""Update the shared simulation duration used by the scripts."""
-	global duration_ms, duration
-	duration_ms = float(value_ms)
-	duration = duration_ms * ms
 
 N_exc_c = 320
 N_inh = 700 
@@ -210,13 +201,13 @@ def compute_S_from_groups(spike_i, spike_t_ms, groups, bin_edges_ms, n_neurons):
 	return float(np.mean(std_per_bin))
 
 
-def compute_S_metrics(spike_i, spike_t_ms, cluster_ids, group_size, bin_size_ms=100.0, n_shuffles=10):
+def compute_S_metrics(spike_i, spike_t_ms, cluster_ids, group_size, duration_ms, bin_size_ms=100.0, n_shuffles=10):
 	"""Compute S, <S_shuff>, and S-<S_shuff> from excitatory spikes."""
 	n_neurons = len(cluster_ids)
 	if n_neurons % group_size != 0:
 		raise ValueError("Number of neurons must be divisible by group_size.")
 
-	t_max = duration / ms
+	t_max = float(duration_ms)
 	bin_edges_ms = np.arange(0.0, t_max + bin_size_ms + 1e-9, bin_size_ms)
 
 	unique_clusters = np.unique(cluster_ids)
