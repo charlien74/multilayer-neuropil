@@ -24,6 +24,7 @@ def main(
     duration_ms,
     r_ee,
     louvain_resolution,
+    n_uniform_layers,
     output_dir,
 ):
     repo_root = Path(__file__).resolve().parent
@@ -57,6 +58,8 @@ def main(
             str(mi_bin_width_ms),
             '--duration-ms',
             str(duration_ms),
+            '--n-uniform-layers',
+            str(n_uniform_layers),
             '--output-public-dir',
             str(output_public_dir),
             '--output-internal-dir',
@@ -212,6 +215,12 @@ if __name__ == '__main__':
         help='Resolution parameter for Louvain community detection in network_analysis.py.',
     )
     parser.add_argument(
+        '--n-uniform-layers',
+        type=int,
+        default=2,
+        help='Number of uniform (assembly-free) layers at the top of the stack, passed to multilayer.py.',
+    )
+    parser.add_argument(
         '--output-dir',
         default='.',
         help='Optional relative run subdirectory under output/public and output/internal.',
@@ -233,6 +242,8 @@ if __name__ == '__main__':
         raise ValueError('--spatial-mi-radius-um must be positive.')
     if args.duration_ms <= 0.0:
         raise ValueError('--duration-ms must be positive.')
+    if args.n_uniform_layers < 0:
+        raise ValueError('--n-uniform-layers must be non-negative.')
     main(
         radius_um=args.radius_um,
         layer_weight_decay_lambda=args.layer_weight_decay_lambda,
@@ -247,5 +258,6 @@ if __name__ == '__main__':
         duration_ms=args.duration_ms,
         r_ee=args.r_ee,
         louvain_resolution=args.louvain_resolution,
+        n_uniform_layers=args.n_uniform_layers,
         output_dir=args.output_dir,
     )

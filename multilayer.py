@@ -56,6 +56,12 @@ parser.add_argument(
     default='output/internal',
     help='Directory for internal intermediate outputs.',
 )
+parser.add_argument(
+    '--n-uniform-layers',
+    type=int,
+    default=2,
+    help='Number of uniform (assembly-free) layers at the top of the stack.',
+)
 args = parser.parse_args()
 
 if args.summary_dt_ms <= 0.0:
@@ -64,6 +70,8 @@ if args.mi_bin_width_ms <= 0.0:
     raise ValueError('--mi-bin-width-ms must be positive.')
 if args.duration_ms <= 0.0:
     raise ValueError('--duration-ms must be positive.')
+if args.n_uniform_layers < 0:
+    raise ValueError('--n-uniform-layers must be non-negative.')
 
 set_simulation_duration_ms(args.duration_ms)
 output_public_dir = Path(args.output_public_dir)
@@ -109,7 +117,9 @@ y: meter
 """
 
 N_layers = 5
-uniform_layer_start = N_layers - 2
+if args.n_uniform_layers > N_layers:
+    raise ValueError('--n-uniform-layers cannot exceed the total number of layers.')
+uniform_layer_start = N_layers - args.n_uniform_layers
 
 p_avg=0.02
 
