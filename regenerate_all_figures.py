@@ -97,8 +97,6 @@ def main(
             str(repo_root / 'network_analysis.py'),
             '--input-internal-dir',
             str(output_internal_dir),
-            '--input-public-dir',
-            str(output_public_dir),
             '--output-internal-dir',
             str(output_internal_dir),
             '--output-file',
