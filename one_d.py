@@ -1,12 +1,22 @@
 from brian2 import *
+import argparse
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import numpy as np
 from pathlib import Path
 from model_util import *
 
+parser = argparse.ArgumentParser(description='Run 1D clustered spiking simulation.')
+parser.add_argument(
+    '--seed',
+    type=int,
+    default=RANDOM_SEED,
+    help='Random seed for reproducible simulation and plotting jitter.',
+)
+args = parser.parse_args()
+
 start_scope()
-seed(RANDOM_SEED)
+initialize_random_seed(args.seed)
 duration = 20 * second
 
 n_clusters = 10
@@ -117,7 +127,7 @@ for center_um in centers_um:
 max_density = max(np.max(curve) for curve in gaussian_curves)
 dot_y = -0.06 * max_density
 dot_jitter = 0.01 * max_density
-rng = np.random.default_rng(RANDOM_SEED)
+rng = np.random.default_rng(int(args.seed))
 
 fig, (ax_gauss, ax_raster) = plt.subplots(2, 1, figsize=(14, 10), constrained_layout=True)
 

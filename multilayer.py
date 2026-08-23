@@ -62,6 +62,12 @@ parser.add_argument(
     default=2,
     help='Number of uniform (assembly-free) layers at the top of the stack.',
 )
+parser.add_argument(
+    '--seed',
+    type=int,
+    default=RANDOM_SEED,
+    help='Random seed for reproducible simulation and sampling.',
+)
 args = parser.parse_args()
 
 if args.summary_dt_ms <= 0.0:
@@ -80,7 +86,7 @@ output_public_dir.mkdir(parents=True, exist_ok=True)
 output_internal_dir.mkdir(parents=True, exist_ok=True)
 
 start_scope()
-seed(RANDOM_SEED)
+initialize_random_seed(args.seed)
 
 weight_decay_l = 50 * um
 inh_weight_decay_l = 100 * um
@@ -382,6 +388,7 @@ with open(output_public_dir / 'S_hat_values.txt', 'w') as f:
 mi_matrix_multilayer = save_mi_outputs(
     spike_mon=spike_mon_exc[N_layers - 1],
     bin_width_ms=args.mi_bin_width_ms,
+    rng_seed=args.seed,
     matrix_output_npz=str(output_internal_dir / 'mi_matrix_multilayer_readout_exc.npz'),
     heatmap_output_png=str(output_public_dir / 'mi_heatmap_multilayer_readout_exc.png'),
     title='Multilayer readout excitatory MI heatmap',
@@ -933,7 +940,7 @@ fig.text(
 	f"Cluster radius (stdev): {float(sigma_c / um):.1f} um | "
     f"R_ee: {R_ee:.2f} | "
     f"Layer 0 p_ee_in/out: {layers[0]['p_ee_in']:.3f}/{layers[0]['p_ee_out']:.3f} | "
-	f"Random seed: {RANDOM_SEED}",
+    f"Random seed: {args.seed}",
 	fontsize=9,
 	ha='left',
 	va='bottom'

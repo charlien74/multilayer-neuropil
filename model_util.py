@@ -6,6 +6,14 @@ defaultclock.dt = 0.1 * ms
 duration_ms = 2000.0
 duration = duration_ms * ms
 
+
+def initialize_random_seed(seed_value: int = RANDOM_SEED) -> int:
+	"""Set Brian2 and NumPy RNG seeds and return the normalized seed."""
+	seed_int = int(seed_value)
+	seed(seed_int)
+	np.random.seed(seed_int)
+	return seed_int
+
 def set_simulation_duration_ms(value_ms):
 	"""Update the shared simulation duration used by the scripts."""
 	global duration_ms, duration

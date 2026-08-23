@@ -466,10 +466,10 @@ def plot_proxy_column_spatial_band_mapping(
 	plt.close(fig)
 
 
-def build_uniform_readout_layer(bundle, readout_tensor):
+def build_uniform_readout_layer(bundle, readout_tensor, seed_value=RANDOM_SEED):
 	"""Create a uniform readout layer driven by the precomputed readout tensor."""
 	start_scope()
-	seed(RANDOM_SEED)
+	initialize_random_seed(seed_value)
 
 	time_ms = np.asarray(bundle['time_ms'], dtype=np.float32)
 	if readout_tensor.shape[0] != time_ms.shape[0]:
@@ -623,6 +623,7 @@ def main(
 	radius_um=10.0,
 	layer_weight_decay_lambda=1.0,
 	mi_bin_width_ms=10.0,
+	seed_value=RANDOM_SEED,
 	output_public_dir='output/public',
 	output_internal_dir='output/internal',
 ):
@@ -638,7 +639,7 @@ def main(
 		output_npz=output_internal_dir / 'readout_avg_radius.npz',
 		neighborhood_npz=output_internal_dir / 'readout_neighborhood_radius.npz',
 	)
-	result = build_uniform_readout_layer(bundle, readout_tensor)
+	result = build_uniform_readout_layer(bundle, readout_tensor, seed_value=seed_value)
 	save_readout_simulation_outputs(
 		result,
 		readout_tensor,
@@ -649,6 +650,7 @@ def main(
 	mi_matrix_neuropil = save_mi_outputs(
 		spike_mon=result['spike_mon_exc'],
 		bin_width_ms=mi_bin_width_ms,
+		rng_seed=seed_value,
 		matrix_output_npz=str(output_internal_dir / 'mi_matrix_neuropil_readout_exc.npz'),
 		heatmap_output_png=str(output_public_dir / 'mi_heatmap_neuropil_readout_exc.png'),
 		title='Neuropil readout excitatory MI heatmap',
@@ -739,6 +741,12 @@ if __name__ == '__main__':
 		default='output/internal',
 		help='Directory for internal intermediate outputs.',
 	)
+	parser.add_argument(
+		'--seed',
+		type=int,
+		default=RANDOM_SEED,
+		help='Random seed for reproducible simulation and MI surrogate sampling.',
+	)
 	args = parser.parse_args()
 	if args.mi_bin_width_ms <= 0.0:
 		raise ValueError('--mi-bin-width-ms must be positive.')
@@ -749,6 +757,7 @@ if __name__ == '__main__':
 		radius_um=args.radius_um,
 		layer_weight_decay_lambda=args.layer_weight_decay_lambda,
 		mi_bin_width_ms=args.mi_bin_width_ms,
+		seed_value=args.seed,
 		output_public_dir=args.output_public_dir,
 		output_internal_dir=args.output_internal_dir,
 	)

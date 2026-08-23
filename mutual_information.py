@@ -411,7 +411,8 @@ def bin_spikes_and_compute_mi_matrix_corrected(spike_mon: SpikeMonitor,
                                                bin_width_ms: float,
                                                n_null: int = 100,
                                                lag: int = 10,
-                                               method: str = 'plugin'):
+                                               method: str = 'plugin',
+                                               rng_seed: int | None = None):
     spike_times_ms = np.asarray(spike_mon.t / ms, dtype=float)
     t_start = spike_times_ms.min() if spike_times_ms.size > 0 else 0.0
     t_stop = spike_times_ms.max() if spike_times_ms.size > 0 else 0.0
@@ -432,6 +433,7 @@ def bin_spikes_and_compute_mi_matrix_corrected(spike_mon: SpikeMonitor,
         binned_spikes,
         n_null=n_null,
         lag=lag,
+        rng=rng_seed,
     )
 
     mi_matrix = np.zeros((n_excitatory, n_excitatory), dtype=float)
@@ -471,6 +473,7 @@ def bin_spike_events_and_compute_mi_matrix_corrected(
     n_null: int = 100,
     lag: int = 10,
     method: str = 'plugin',
+    rng_seed: int | None = None,
 ) -> np.ndarray:
     """Compute corrected MI from saved spike-event arrays via existing SpikeMonitor path."""
 
@@ -494,6 +497,7 @@ def bin_spike_events_and_compute_mi_matrix_corrected(
         n_null=n_null,
         lag=lag,
         method=method,
+        rng_seed=rng_seed,
     )
 
 
@@ -531,6 +535,7 @@ def save_spatial_region_mi_outputs(
     lag: int = 10,
     method: str = 'grass',
     clip: int = 255,
+    rng_seed: int | None = None,
     t_start_ms: float | None = None,
     t_stop_ms: float | None = None,
 ) -> np.ndarray:
@@ -579,6 +584,7 @@ def save_spatial_region_mi_outputs(
         regional_states,
         n_null=n_null,
         lag=lag,
+        rng=rng_seed,
     )
     method_index = tuple(result['methods']).index(method)
     mi_matrix = np.zeros((n_regions, n_regions), dtype=float)
@@ -646,13 +652,15 @@ def save_mi_outputs(spike_mon: SpikeMonitor,
                     bin_width_ms: float,
                     matrix_output_npz: str,
                     heatmap_output_png: str,
-                    title: str) -> np.ndarray:
+                    title: str,
+                    rng_seed: int | None = None) -> np.ndarray:
     """Compute MI matrix, save raw matrix and heatmap, and return matrix."""
     mi_matrix = bin_spikes_and_compute_mi_matrix_corrected(spike_mon=spike_mon,
                                                            bin_width_ms=bin_width_ms,
                                                            n_null=100,
                                                            lag=10,
-                                                           method='grass')
+                                                           method='grass',
+                                                           rng_seed=rng_seed)
 
     matrix_out = Path(matrix_output_npz)
     matrix_out.parent.mkdir(parents=True, exist_ok=True)

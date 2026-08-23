@@ -12,6 +12,7 @@ from mutual_information import \
     bin_spike_events_and_compute_mi_matrix_corrected, \
     estimate_distance_based_mi, \
     save_spatial_region_mi_outputs
+from model_util import RANDOM_SEED, N_exc_c, compute_S_metrics, initialize_random_seed, set_simulation_duration_ms
 
 
 def deltacon_similarity_from_adj(A1: np.ndarray, 
@@ -340,11 +341,17 @@ def randomize_binary_network_preserve_degree(adj_bin: np.ndarray,
 
 
 def louvain_partition_labels_from_adj(adj_bin: np.ndarray,
-                                      resolution: float = 1.0) -> np.ndarray:
+                                      resolution: float = 1.0,
+                                      seed: int | None = 0) -> np.ndarray:
     """Run Louvain on an undirected view of adjacency and return integer labels per node."""
     undirected_adj = np.maximum(adj_bin, adj_bin.T)
     G = nx.from_numpy_array(undirected_adj)
-    communities = nx.community.louvain_communities(G, weight='weight', resolution=resolution, seed=0)
+    communities = nx.community.louvain_communities(
+        G,
+        weight='weight',
+        resolution=resolution,
+        seed=seed,
+    )
 
     labels = np.full(G.number_of_nodes(), -1, dtype=np.int32)
     for comm_idx, comm_nodes in enumerate(communities):
@@ -415,24 +422,44 @@ def partition_mutual_information(labels_a: np.ndarray, labels_b: np.ndarray,
 def adjusted_mutual_information(functional_a_bin: np.ndarray, 
                                 functional_b_bin: np.ndarray,
                                 louvain_resolution: float,
-                                n_null: int) -> float:
+                                n_null: int,
+                                rng_seed: int | None = None) -> float:
     if n_null <= 0:
         raise ValueError('n_null must be positive.')
 
-    labels_a, _ = louvain_partition_labels_from_adj(functional_a_bin, 
-                                                    resolution=louvain_resolution)
-    labels_b, _ = louvain_partition_labels_from_adj(functional_b_bin, 
-                                                    resolution=louvain_resolution)
+    rng = np.random.default_rng(rng_seed)
+
+    labels_a, _ = louvain_partition_labels_from_adj(
+        functional_a_bin,
+        resolution=louvain_resolution,
+        seed=int(rng.integers(0, 2**31 - 1)) if rng_seed is not None else 0,
+    )
+    labels_b, _ = louvain_partition_labels_from_adj(
+        functional_b_bin,
+        resolution=louvain_resolution,
+        seed=int(rng.integers(0, 2**31 - 1)) if rng_seed is not None else 0,
+    )
     observed = partition_mutual_information(labels_a, labels_b)
 
     expected_mi = 0.0
     for _ in range(n_null):
-        a_bin_randomized = randomize_binary_network_preserve_degree(functional_a_bin, seed=None)
-        b_bin_randomized = randomize_binary_network_preserve_degree(functional_b_bin, seed=None)
-        labels_a_randomized, _ = louvain_partition_labels_from_adj(a_bin_randomized, 
-                                                                  resolution=louvain_resolution)
-        labels_b_randomized, _ = louvain_partition_labels_from_adj(b_bin_randomized, 
-                                                                  resolution=louvain_resolution)
+        swap_seed_a = int(rng.integers(0, 2**31 - 1)) if rng_seed is not None else None
+        swap_seed_b = int(rng.integers(0, 2**31 - 1)) if rng_seed is not None else None
+        louvain_seed_a = int(rng.integers(0, 2**31 - 1)) if rng_seed is not None else 0
+        louvain_seed_b = int(rng.integers(0, 2**31 - 1)) if rng_seed is not None else 0
+
+        a_bin_randomized = randomize_binary_network_preserve_degree(functional_a_bin, seed=swap_seed_a)
+        b_bin_randomized = randomize_binary_network_preserve_degree(functional_b_bin, seed=swap_seed_b)
+        labels_a_randomized, _ = louvain_partition_labels_from_adj(
+            a_bin_randomized,
+            resolution=louvain_resolution,
+            seed=louvain_seed_a,
+        )
+        labels_b_randomized, _ = louvain_partition_labels_from_adj(
+            b_bin_randomized,
+            resolution=louvain_resolution,
+            seed=louvain_seed_b,
+        )
         expected_mi += partition_mutual_information(labels_a_randomized, labels_b_randomized).mi
     expected_mi /= n_null
 
@@ -536,7 +563,10 @@ def run_analysis(
     spatial_mi_bin_width_ms: float,
     spatial_mi_radius_um: float,
     spatial_mi_output_file: Path,
+    seed: int,
 ) -> None:
+    initialize_random_seed(seed)
+
     mi_a_path = output_internal_dir / 'mi_matrix_multilayer_readout_exc.npz'
     mi_b_path = output_internal_dir / 'mi_matrix_neuropil_readout_exc.npz'
 
@@ -574,11 +604,25 @@ def run_analysis(
     functional_a_bin = knn_functional_binary(mi_a, k_eff)
     functional_b_bin = knn_functional_binary(mi_b, k_eff)
 
-    louvain_labels_a, n_communities_a = louvain_partition_labels_from_adj(functional_a_bin, resolution=louvain_resolution)
-    louvain_labels_b, n_communities_b = louvain_partition_labels_from_adj(functional_b_bin, resolution=louvain_resolution)
+    louvain_labels_a, n_communities_a = louvain_partition_labels_from_adj(
+        functional_a_bin,
+        resolution=louvain_resolution,
+        seed=seed,
+    )
+    louvain_labels_b, n_communities_b = louvain_partition_labels_from_adj(
+        functional_b_bin,
+        resolution=louvain_resolution,
+        seed=seed,
+    )
     louvain_nmi = partition_mutual_information(louvain_labels_a, louvain_labels_b).normalized_mi
 
-    louvain_adjusted_mi = adjusted_mutual_information(functional_a_bin, functional_b_bin, louvain_resolution=louvain_resolution, n_null=500)
+    louvain_adjusted_mi = adjusted_mutual_information(
+        functional_a_bin,
+        functional_b_bin,
+        louvain_resolution=louvain_resolution,
+        n_null=500,
+        rng_seed=seed,
+    )
 
     sim_struct_a_func_a = float(deltacon_similarity_from_adj(structural_bin, functional_a_bin))
     sim_struct_b_func_b = float(deltacon_similarity_from_adj(structural_bin, functional_b_bin))
@@ -636,6 +680,7 @@ def run_analysis(
                 title=f'Multilayer regional MI (M={n_regions})',
                 lag=regional_lag_bins,
                 clip=255,
+                rng_seed=seed + n_regions,
             )
             neuro_region_mi = save_spatial_region_mi_outputs(
                 spike_i=neuro_i,
@@ -649,22 +694,26 @@ def run_analysis(
                 title=f'Neuropil regional MI (M={n_regions})',
                 lag=regional_lag_bins,
                 clip=255,
+                rng_seed=seed + n_regions,
             )
             regional_a_bin = knn_functional_binary(multi_region_mi, regional_k)
             regional_b_bin = knn_functional_binary(neuro_region_mi, regional_k)
             regional_labels_a, regional_communities_a = louvain_partition_labels_from_adj(
                 regional_a_bin,
                 resolution=louvain_resolution,
+                seed=seed + n_regions,
             )
             regional_labels_b, regional_communities_b = louvain_partition_labels_from_adj(
                 regional_b_bin,
                 resolution=louvain_resolution,
+                seed=seed + n_regions,
             )
             regional_adjusted_mi = adjusted_mutual_information(
                 regional_a_bin,
                 regional_b_bin,
                 louvain_resolution=louvain_resolution,
                 n_null=500,
+                rng_seed=seed + n_regions,
             )
             append_spatial_region_results(
                 output_path=spatial_mi_output_file,
@@ -758,6 +807,12 @@ def main():
         help='Resolution parameter for Louvain community detection in network_analysis.py.',
     )
     parser.add_argument(
+        '--seed',
+        type=int,
+        default=RANDOM_SEED,
+        help='Random seed for reproducible null-model and MI surrogate sampling.',
+    )
+    parser.add_argument(
         '--distance-based-mi-h',
         default=10,
         type=int,
@@ -825,6 +880,7 @@ def main():
         spatial_mi_bin_width_ms=float(args.spatial_mi_bin_width_ms),
         spatial_mi_radius_um=float(args.spatial_mi_radius_um),
         spatial_mi_output_file=Path(args.spatial_mi_output_file),
+        seed=int(args.seed),
     )
 
 

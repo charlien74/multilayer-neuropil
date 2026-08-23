@@ -151,7 +151,14 @@ def main():
 		default=Path("output/S_hat_uniform_multiline.png"),
 		help="Output image path.",
 	)
+	parser.add_argument(
+		"--seed",
+		type=int,
+		default=2,
+		help="Random seed (reserved for consistency across analysis scripts).",
+	)
 	args = parser.parse_args()
+	np.random.seed(int(args.seed))
 
 	input_path = resolve_input_path(args.input)
 	rows = load_s_hat_rows(input_path)
