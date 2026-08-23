@@ -315,7 +315,7 @@ net_objects.extend(spike_mon_exc)
 net_objects.extend(spike_mon_inh)
 net_objects.extend(state_mon_exc_lower)
 
-Network(net_objects).run(duration)
+Network(net_objects).run(args.duration_ms * ms)
 
 # Persist lower-layer summary signal and geometry for downstream readout processing.
 expected_samples = int(np.round(float(duration / (args.summary_dt_ms * ms))))
@@ -441,13 +441,14 @@ with open(output_internal_dir / 'adjacency_global_layer_offsets.csv', 'w') as f:
 
 
 def plot_multilayer_3d_structure(layers, interlayer_synapses, output_path):
-    """Plot a 3D view of all layers and sampled E-E edges to highlight column structure."""
+    """Plot a 3D view with structured-layer colors and neutral uniform layers."""
     fig = plt.figure(figsize=(14, 11))
     ax = fig.add_subplot(111, projection='3d')
     show_connection_lines = False
 
     layer_spacing_um = 140.0
     cmap = plt.get_cmap('tab10')
+    neuron_color = '#4a4a4a'
 
     # Keep edge counts limited so the figure stays legible and fast to render.
     max_incolumn_edges_per_column = 420
@@ -503,44 +504,51 @@ def plot_multilayer_3d_structure(layers, interlayer_synapses, output_path):
             linewidth=0.9,
         )
 
-        unique_cols = np.unique(cluster_ids)
-        for c in unique_cols:
-            mask = cluster_ids == c
-            color = cmap(int(c) % 10)
+        if layer['centroids'] is None:
             ax.scatter(
-                positions_um[mask, 0],
-                positions_um[mask, 1],
-                np.full(np.sum(mask), z_val),
+                positions_um[:, 0],
+                positions_um[:, 1],
+                np.full(positions_um.shape[0], z_val),
                 s=18,
-                color=color,
-                alpha=0.07,
+                color=neuron_color,
+                alpha=0.08,
                 edgecolors='none',
             )
             ax.scatter(
-                positions_um[mask, 0],
-                positions_um[mask, 1],
-                np.full(np.sum(mask), z_val),
+                positions_um[:, 0],
+                positions_um[:, 1],
+                np.full(positions_um.shape[0], z_val),
                 s=6,
-                color=color,
-                alpha=0.88,
+                color=neuron_color,
+                alpha=0.82,
                 edgecolors='none',
             )
-            if np.sum(mask) > 0:
-                cx = float(np.mean(positions_um[mask, 0]))
-                cy = float(np.mean(positions_um[mask, 1]))
+        else:
+            unique_cols = np.unique(cluster_ids)
+            for c in unique_cols:
+                mask = cluster_ids == c
+                color = cmap(int(c) % 10)
                 ax.scatter(
-                    [cx],
-                    [cy],
-                    [z_val],
-                    s=42,
+                    positions_um[mask, 0],
+                    positions_um[mask, 1],
+                    np.full(np.sum(mask), z_val),
+                    s=18,
                     color=color,
-                    edgecolors='black',
-                    linewidths=0.3,
-                    alpha=0.95,
+                    alpha=0.07,
+                    edgecolors='none',
                 )
-                ax.text(cx, cy, z_val + 6.0, f'C{int(c)}', fontsize=8, color=color)
+                ax.scatter(
+                    positions_um[mask, 0],
+                    positions_um[mask, 1],
+                    np.full(np.sum(mask), z_val),
+                    s=6,
+                    color=color,
+                    alpha=0.88,
+                    edgecolors='none',
+                )
 
         if show_connection_lines:
+            unique_cols = np.unique(cluster_ids)
             syn_ee = layer['syn_ee']
             pre_idx = np.asarray(syn_ee.i[:], dtype=int)
             post_idx = np.asarray(syn_ee.j[:], dtype=int)
@@ -827,7 +835,7 @@ def plot_uniform_proxy_band_mapping(layers, output_path, uniform_start_idx):
 
 # Plot all layers: one row per layer, spatial in col 1 and raster in col 2.
 fig, axes = plt.subplots(N_layers, 2, figsize=(16, 5 * N_layers), squeeze=False)
-duration_ms = float(duration / ms)
+duration_ms = float(args.duration_ms)
 
 for layer_i in range(N_layers):
     layer = layers[layer_i]
