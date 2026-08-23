@@ -317,6 +317,11 @@ net_objects.extend(state_mon_exc_lower)
 
 Network(net_objects).run(args.duration_ms * ms)
 
+# Defensive re-check: on long HPC runs, ensure output directories still exist
+# before writing artifacts.
+output_public_dir.mkdir(parents=True, exist_ok=True)
+output_internal_dir.mkdir(parents=True, exist_ok=True)
+
 # Persist lower-layer summary signal and geometry for downstream readout processing.
 expected_samples = int(np.round(float(duration / (args.summary_dt_ms * ms))))
 summary_blocks = []
