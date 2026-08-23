@@ -17,7 +17,9 @@ from model_util import RANDOM_SEED, N_exc_c, compute_S_metrics, initialize_rando
 
 def deltacon_similarity_from_adj(A1: np.ndarray, 
                                  A2: np.ndarray, 
-                                 epsilon: float = 0.01) -> float:
+                                 epsilon: float = 0.01,
+                                 n_null: int = 500,
+                                 rng_seed: int | None = None) -> float:
     """
     Compute DeltaCon similarity between two graphs given by adjacency matrices.
     Parameters:
@@ -30,18 +32,31 @@ def deltacon_similarity_from_adj(A1: np.ndarray,
             DeltaCon similarity in [0, 1]
     """
     if A1.shape != A2.shape:
-        raise ValueError('Adjacency matrices must have the same dimensions')
-    if A1.ndim != 2 or A1.shape[0] != A1.shape[1]:
-        raise ValueError('Adjacency matrices must be square')
+        raise ValueError(
+            "Adjacency matrices must have the same dimensions."
+        )
 
-    # DeltaCon is defined for undirected graphs; for this usecase we compare
-    # directed/weighted matrices via their undirected support.
+    if A1.ndim != 2 or A1.shape[0] != A1.shape[1]:
+        raise ValueError(
+            "Adjacency matrices must be square."
+        )
+
+    if epsilon <= 0:
+        raise ValueError("epsilon must be > 0.")
+
+    if n_null <= 0:
+        raise ValueError("n_null must be > 0.")
+
     A1 = np.asarray(A1, dtype=np.float64)
     A2 = np.asarray(A2, dtype=np.float64)
+
+    # DeltaCon is being applied here to undirected graph support.
     A1 = np.maximum(A1, A1.T)
     A2 = np.maximum(A2, A2.T)
+
     A1 = np.clip(A1, 0.0, None)
     A2 = np.clip(A2, 0.0, None)
+
     np.fill_diagonal(A1, 0.0)
     np.fill_diagonal(A2, 0.0)
 
@@ -51,17 +66,76 @@ def deltacon_similarity_from_adj(A1: np.ndarray,
     def affinity_matrix(A: np.ndarray) -> np.ndarray:
         D = np.diag(np.sum(A, axis=1))
         M = I + (epsilon ** 2) * D - epsilon * A
-        # Solve M X = I rather than forming inv(M) explicitly.
+
+        # Solve M X = I rather than explicitly computing inv(M).
         S = np.linalg.solve(M, I)
-        # Numerical noise can create tiny negative values; clip before sqrt.
+
+        # Protect against tiny negative values from numerical noise.
         return np.clip(S, 0.0, None)
 
-    S1 = affinity_matrix(A1)
-    S2 = affinity_matrix(A2)
+    def similarity(A: np.ndarray, B: np.ndarray) -> float:
+        S1 = affinity_matrix(A)
+        S2 = affinity_matrix(B)
 
-    diff = np.sqrt(S1) - np.sqrt(S2)
-    d = np.linalg.norm(diff, ord='fro')
-    return float(1.0 / (1.0 + d))
+        diff = np.sqrt(S1) - np.sqrt(S2)
+        d = np.linalg.norm(diff, ord="fro")
+
+        return float(1.0 / (1.0 + d))
+
+    # Observed node-aligned similarity.
+    observed = similarity(A1, A2)
+
+    # Null: preserve A2 exactly but destroy node correspondence.
+    rng = np.random.default_rng(rng_seed)
+
+    null_values = np.empty(n_null, dtype=np.float64)
+
+    identity = np.arange(n)
+
+    for null_idx in range(n_null):
+        # Avoid the identity permutation, since it reproduces the
+        # observed graph alignment.
+        while True:
+            perm = rng.permutation(n)
+            if not np.array_equal(perm, identity):
+                break
+
+        A2_null = A2[np.ix_(perm, perm)]
+
+        null_values[null_idx] = similarity(
+            A1,
+            A2_null,
+        )
+
+    null_mean = float(np.mean(null_values))
+    null_sd = float(np.std(null_values, ddof=1))
+
+    if np.isclose(null_mean, 1.0):
+        raise ValueError(
+            "Null DeltaCon similarity is approximately 1; "
+            "null correction is undefined."
+        )
+
+    corrected = float(
+        (observed - null_mean)
+        / (1.0 - null_mean)
+    )
+
+    # Empirical one-sided p-value:
+    # how often is a random alignment at least as similar?
+    p = float(
+        (1 + np.count_nonzero(null_values >= observed))
+        / (n_null + 1)
+    )
+
+    return {
+        "observed": observed,
+        "null": null_mean,
+        "corrected": corrected,
+        "null_sd": null_sd,
+        "p": p,
+        "null_values": null_values,
+    }
 
 
 def Connector(Q):
@@ -281,7 +355,10 @@ def append_spatial_region_results(
     k_used_knn: int,
     n_communities_a: int,
     n_communities_b: int,
-    functional_a_functional_b: float,
+    deltacon_observed: float,
+    deltacon_null: float,
+    deltacon_corrected: float,
+    deltacon_p: float,
     louvain_adjusted_mi: float,
 ) -> None:
     """Append one regional-network comparison row to a dedicated CSV."""
@@ -292,7 +369,10 @@ def append_spatial_region_results(
         'k_used_knn',
         'n_communities_a',
         'n_communities_b',
-        'functional_a_functional_b',
+        'deltacon_observed',
+        'deltacon_null',
+        'deltacon_corrected',
+        'deltacon_p',
         'louvain_adjusted_mi',
     ]
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -308,7 +388,10 @@ def append_spatial_region_results(
             int(k_used_knn),
             int(n_communities_a),
             int(n_communities_b),
-            f'{functional_a_functional_b:.6f}',
+            f'{deltacon_observed:.6f}',
+            f'{deltacon_null:.6f}',
+            f'{deltacon_corrected:.6f}',
+            f'{deltacon_p:.6f}',
             f'{louvain_adjusted_mi:.6f}',
         ])
 
@@ -624,9 +707,15 @@ def run_analysis(
         rng_seed=seed,
     )
 
-    sim_struct_a_func_a = float(deltacon_similarity_from_adj(structural_bin, functional_a_bin))
-    sim_struct_b_func_b = float(deltacon_similarity_from_adj(structural_bin, functional_b_bin))
-    sim_func_a_func_b = float(deltacon_similarity_from_adj(functional_a_bin, functional_b_bin))
+    deltacon_struct_a_func_a = deltacon_similarity_from_adj(structural_bin, 
+                                                            functional_a_bin,
+                                                            rng_seed=seed)
+    deltacon_struct_b_func_b = deltacon_similarity_from_adj(structural_bin, 
+                                                            functional_b_bin,
+                                                            rng_seed=seed)
+    deltacon_func_a_func_b = deltacon_similarity_from_adj(functional_a_bin, 
+                                                          functional_b_bin,
+                                                          rng_seed=seed)
     structural_density = compute_structural_density(structural_adj)
 
     # Distance-based MI between models
@@ -715,6 +804,11 @@ def run_analysis(
                 n_null=500,
                 rng_seed=seed + n_regions,
             )
+            deltacon_result = deltacon_similarity_from_adj(
+                regional_a_bin,
+                regional_b_bin,
+                rng_seed=seed + n_regions)
+            
             append_spatial_region_results(
                 output_path=spatial_mi_output_file,
                 n_regions=n_regions,
@@ -723,10 +817,10 @@ def run_analysis(
                 k_used_knn=regional_k,
                 n_communities_a=regional_communities_a,
                 n_communities_b=regional_communities_b,
-                functional_a_functional_b=deltacon_similarity_from_adj(
-                    regional_a_bin,
-                    regional_b_bin,
-                ),
+                deltacon_observed=deltacon_result['observed'],
+                deltacon_null=deltacon_result['null'],
+                deltacon_corrected=deltacon_result['corrected'],
+                deltacon_p=deltacon_result['p'],
                 louvain_adjusted_mi=regional_adjusted_mi,
             )
 
@@ -746,9 +840,9 @@ def run_analysis(
         n_communities_b=int(n_communities_b),
         louvain_nmi=float(louvain_nmi),
         louvain_adjusted_mi=float(louvain_adjusted_mi),
-        structural_a_functional_a=sim_struct_a_func_a,
-        structural_b_functional_b=sim_struct_b_func_b,
-        functional_a_functional_b=sim_func_a_func_b,
+        structural_a_functional_a=deltacon_struct_a_func_a['corrected'],
+        structural_b_functional_b=deltacon_struct_b_func_b['corrected'],
+        functional_a_functional_b=deltacon_func_a_func_b['corrected'],
         distance_based_mi=distance_based_mi['mi_bits'],
         distance_based_mi_null=distance_based_mi['mi_null_bits'],
         distance_based_mi_corrected=distance_based_mi['mi_corrected_bits'],
@@ -757,9 +851,9 @@ def run_analysis(
 
     print(f"Readout average degree (structural): {avg_degree:.6f}")
     print(f"k used for kNN functional construction: {k_eff}")
-    print(f"DeltaCon structural_a_functional_a: {sim_struct_a_func_a:.6f}")
-    print(f"DeltaCon structural_b_functional_b: {sim_struct_b_func_b:.6f}")
-    print(f"DeltaCon functional_a_functional_b: {sim_func_a_func_b:.6f}")
+    print(f"DeltaCon structural_a_functional_a: {deltacon_struct_a_func_a['corrected']:.6f}")
+    print(f"DeltaCon structural_b_functional_b: {deltacon_struct_b_func_b['corrected']:.6f}")
+    print(f"DeltaCon functional_a_functional_b: {deltacon_func_a_func_b['corrected']:.6f}")
     print(f"Louvain partition NMI (functional_a vs functional_b): {louvain_nmi:.6f}")
     print(f"Appended results row to: {output_path}")
 
