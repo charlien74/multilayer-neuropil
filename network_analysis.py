@@ -646,9 +646,64 @@ def run_analysis(
     spatial_mi_bin_width_ms: float,
     spatial_mi_radius_um: float,
     spatial_mi_output_file: Path,
+    distance_based_mi_only: bool,
     seed: int,
 ) -> None:
     initialize_random_seed(seed)
+
+    multilayer_spikes_path = input_internal_dir / 'multilayer_readout_spikes.npz'
+    neuropil_spikes_path = input_internal_dir / 'readout_layer_simulation.npz'
+
+    multi_i, multi_t, multi_positions_um, multi_n = load_spike_events(multilayer_spikes_path)
+    neuro_i, neuro_t, neuro_positions_um, neuro_n = load_spike_events(neuropil_spikes_path)
+
+    if multi_n != neuro_n:
+        raise ValueError("Multilayer and Neuropil models expected to have same number of neurons.")
+
+    distance_based_mi = estimate_distance_based_mi(
+        multi_i,
+        multi_t,
+        multi_positions_um,
+        neuro_i,
+        neuro_t,
+        neuro_positions_um,
+        multi_n,
+        window_ms=45.0,
+        dt_ms=1.0,
+        tau_ms=50.0,
+        spatial_sigma_um=20.0,
+        h=distance_based_mi_h,
+    )
+
+    if distance_based_mi_only:
+        append_results_row(
+            output_path=output_path,
+            duration_ms=float(duration_ms),
+            r_ee=float(r_ee),
+            mi_bin_size_ms=float(mi_bin_width_ms),
+            summary_signal=summary_signal,
+            summary_dt_ms=float(summary_dt_ms),
+            layer_weight_decay_lambda=float(layer_weight_decay_lambda),
+            radius_um=float(radius_um),
+            k_used_knn=0,
+            louvain_resolution=0.0,
+            n_communities_a=0,
+            n_communities_b=0,
+            louvain_nmi=0.0,
+            louvain_adjusted_mi=0.0,
+            structural_a_functional_a=0.0,
+            structural_b_functional_b=0.0,
+            functional_a_functional_b=0.0,
+            distance_based_mi=distance_based_mi['mi_bits'],
+            distance_based_mi_null=distance_based_mi['mi_null_bits'],
+            distance_based_mi_corrected=distance_based_mi['mi_corrected_bits'],
+            distance_based_mi_h=distance_based_mi_h,
+        )
+        print(f"Distance-based MI: {distance_based_mi['mi_bits']:.6f}")
+        print(f"Distance-based MI null: {distance_based_mi['mi_null_bits']:.6f}")
+        print(f"Distance-based MI corrected: {distance_based_mi['mi_corrected_bits']:.6f}")
+        print(f"Appended distance-based MI-only results row to: {output_path}")
+        return
 
     mi_a_path = output_internal_dir / 'mi_matrix_multilayer_readout_exc.npz'
     mi_b_path = output_internal_dir / 'mi_matrix_neuropil_readout_exc.npz'
@@ -717,35 +772,6 @@ def run_analysis(
                                                           functional_b_bin,
                                                           rng_seed=seed)
     structural_density = compute_structural_density(structural_adj)
-
-    # Distance-based MI between models
-    multilayer_spikes_path = input_internal_dir / 'multilayer_readout_spikes.npz'
-    neuropil_spikes_path = input_internal_dir / 'readout_layer_simulation.npz'
-
-    multi_i, multi_t, multi_positions_um, multi_n = load_spike_events(multilayer_spikes_path)
-    neuro_i, neuro_t, neuro_positions_um, neuro_n = load_spike_events(neuropil_spikes_path)
-
-    if multi_n != neuro_n:
-        raise ValueError("Multilayer and Neuropil models expected to have same number of neurons.")
-
-    db_window_ms = 45.0
-    db_dt_ms = 1.0
-    db_tau_ms = 50.0
-    db_spatial_sigma_um = 20.0 # Mirroring sigma_c from multilayer
-
-
-    distance_based_mi = estimate_distance_based_mi(multi_i,
-                                                   multi_t,
-                                                   multi_positions_um,
-                                                   neuro_i,
-                                                   neuro_t,
-                                                   neuro_positions_um,
-                                                   multi_n,
-                                                   window_ms=db_window_ms,
-                                                   dt_ms=db_dt_ms,
-                                                   tau_ms=db_tau_ms,
-                                                   spatial_sigma_um=db_spatial_sigma_um,
-                                                   h=distance_based_mi_h)
 
     if spatial_mi_regions:
         for n_regions in spatial_mi_regions:
@@ -913,6 +939,11 @@ def main():
         help='Parameter for distance-based MI metric.'
     )
     parser.add_argument(
+        '--distance-based-mi-only',
+        action='store_true',
+        help='Compute only distance-based MI and write zeros for other analysis results.',
+    )
+    parser.add_argument(
         '--spatial-mi-regions',
         type=int,
         nargs='+',
@@ -974,6 +1005,7 @@ def main():
         spatial_mi_bin_width_ms=float(args.spatial_mi_bin_width_ms),
         spatial_mi_radius_um=float(args.spatial_mi_radius_um),
         spatial_mi_output_file=Path(args.spatial_mi_output_file),
+        distance_based_mi_only=bool(args.distance_based_mi_only),
         seed=int(args.seed),
     )
 

@@ -18,6 +18,7 @@ def main(
     mi_bin_width_ms,
     mi_lag_ms,
     distance_based_mi_h,
+    distance_based_mi_only,
     spatial_mi_regions,
     spatial_mi_bin_width_ms,
     spatial_mi_radius_um,
@@ -121,15 +122,15 @@ def main(
             str(louvain_resolution),
             '--distance-based-mi-h',
             str(distance_based_mi_h),
-                        '--spatial-mi-bin-width-ms',
-                        str(spatial_mi_bin_width_ms),
-                        '--spatial-mi-radius-um',
-                        str(spatial_mi_radius_um),
-                        '--spatial-mi-output-file',
-                        str(output_public_dir / 'spatial_region_network_compare_results.csv'),
-                        *(['--spatial-mi-regions', *[str(m) for m in spatial_mi_regions]]
-                            if spatial_mi_regions else []),
-
+            *(['--distance-based-mi-only'] if distance_based_mi_only else []),
+            '--spatial-mi-bin-width-ms',
+            str(spatial_mi_bin_width_ms),
+            '--spatial-mi-radius-um',
+            str(spatial_mi_radius_um),
+            '--spatial-mi-output-file',
+            str(output_public_dir / 'spatial_region_network_compare_results.csv'),
+            *(['--spatial-mi-regions', *[str(m) for m in spatial_mi_regions]]
+                if spatial_mi_regions else []),
         ],
         '3/3 network analysis',
     )
@@ -183,6 +184,11 @@ if __name__ == '__main__':
         type=int,
         default=10,
         help='Neighborhood size used by the distance-based MI metric.',
+    )
+    parser.add_argument(
+        '--distance-based-mi-only',
+        action='store_true',
+        help='Tell network_analysis.py to compute only distance-based MI.',
     )
     parser.add_argument(
         '--spatial-mi-regions',
@@ -265,6 +271,7 @@ if __name__ == '__main__':
         mi_bin_width_ms=args.mi_bin_width_ms,
         mi_lag_ms=args.mi_lag_ms,
         distance_based_mi_h=args.distance_based_mi_h,
+        distance_based_mi_only=args.distance_based_mi_only,
         spatial_mi_regions=args.spatial_mi_regions,
         spatial_mi_bin_width_ms=args.spatial_mi_bin_width_ms,
         spatial_mi_radius_um=args.spatial_mi_radius_um,
