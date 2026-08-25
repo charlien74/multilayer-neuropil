@@ -12,7 +12,7 @@ from mutual_information import \
     bin_spike_events_and_compute_mi_matrix_corrected, \
     estimate_distance_based_mi, \
     save_spatial_region_mi_outputs
-from model_util import RANDOM_SEED, N_exc_c, compute_S_metrics, initialize_random_seed, set_simulation_duration_ms
+from model_util import RANDOM_SEED, N_exc_c, compute_S_metrics, initialize_random_seed
 
 
 def deltacon_similarity_from_adj(A1: np.ndarray, 

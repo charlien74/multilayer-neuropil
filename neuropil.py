@@ -215,6 +215,7 @@ def assign_nearest_centroid_ids(positions_um, centroids):
 def plot_proxy_column_raster(
 	result,
 	proxy_column_ids,
+	duration_ms,
 	readout_positions_um=None,
 	readout_tensor=None,
 	time_ms=None,
@@ -364,7 +365,7 @@ def plot_proxy_column_raster(
 	ax.axhline(n_exc, color='gray', linewidth=0.6, alpha=0.8)
 	ax.text(1.02, 0.5 * n_exc, 'readout', transform=ax.get_yaxis_transform(), fontsize=8, color='tab:red', ha='left', va='center', clip_on=False)
 	ax.text(1.02, n_exc + 0.5 * N_inh, 'inh', transform=ax.get_yaxis_transform(), fontsize=8, color='tab:blue', ha='left', va='center', clip_on=False)
-	ax.set_xlim(0.0, float(duration / ms))
+	ax.set_xlim(0.0, float(duration_ms))
 	ax.set_ylim(-1, n_exc + N_inh + 1)
 
 	if ax_spatial is not None:
@@ -466,7 +467,7 @@ def plot_proxy_column_spatial_band_mapping(
 	plt.close(fig)
 
 
-def build_uniform_readout_layer(bundle, readout_tensor, seed_value=RANDOM_SEED):
+def build_uniform_readout_layer(bundle, readout_tensor, duration_ms, seed_value=RANDOM_SEED):
 	"""Create a uniform readout layer driven by the precomputed readout tensor."""
 	start_scope()
 	initialize_random_seed(seed_value)
@@ -570,7 +571,7 @@ def build_uniform_readout_layer(bundle, readout_tensor, seed_value=RANDOM_SEED):
 		spike_mon_inh,
 		state_mon_exc,
 	])
-	net.run(duration)
+	net.run(duration_ms * ms)
 
 	return {
 		'exc_neurons': readout_exc_neurons,
@@ -589,6 +590,7 @@ def build_uniform_readout_layer(bundle, readout_tensor, seed_value=RANDOM_SEED):
 def save_readout_simulation_outputs(
 	result,
 	readout_tensor,
+	duration_ms,
 	bundle,
 	radius_um,
 	output_npz='output/internal/readout_layer_simulation.npz',
@@ -609,7 +611,7 @@ def save_readout_simulation_outputs(
 		time_ms=time_ms,
 		radius_um=np.float32(radius_um),
 		n_readout_exc=np.int32(readout_v.shape[0]),
-		duration_ms=np.float32(float(duration / ms)),
+		duration_ms=np.float32(duration_ms),
 		readout_positions_um=np.asarray(bundle['readout_positions_um'], dtype=np.float32),
 		exc_spike_i=exc_spike_i,
 		exc_spike_t_ms=exc_spike_t_ms,
@@ -620,6 +622,7 @@ def save_readout_simulation_outputs(
 
 
 def main(
+	duration_ms,
 	radius_um=10.0,
 	layer_weight_decay_lambda=1.0,
 	mi_bin_width_ms=10.0,
@@ -639,12 +642,13 @@ def main(
 		output_npz=output_internal_dir / 'readout_avg_radius.npz',
 		neighborhood_npz=output_internal_dir / 'readout_neighborhood_radius.npz',
 	)
-	result = build_uniform_readout_layer(bundle, readout_tensor, seed_value=seed_value)
+	result = build_uniform_readout_layer(bundle, readout_tensor, duration_ms=duration_ms, seed_value=seed_value)
 	save_readout_simulation_outputs(
-		result,
-		readout_tensor,
-		bundle,
-		radius_um,
+		result=result,
+		readout_tensor=readout_tensor,
+		duration_ms=duration_ms,
+		bundle=bundle,
+		radius_um=radius_um,
 		output_npz=output_internal_dir / 'readout_layer_simulation.npz',
 	)
 	mi_matrix_neuropil = save_mi_outputs(
@@ -658,6 +662,7 @@ def main(
 	plot_proxy_column_raster(
 		result,
 		result['proxy_column_ids'],
+		duration_ms=duration_ms,
 		readout_positions_um=bundle['readout_positions_um'],
 		readout_tensor=readout_tensor,
 		time_ms=bundle['time_ms'],
@@ -752,11 +757,11 @@ if __name__ == '__main__':
 		raise ValueError('--mi-bin-width-ms must be positive.')
 	if args.duration_ms <= 0.0:
 		raise ValueError('--duration-ms must be positive.')
-	set_simulation_duration_ms(args.duration_ms)
 	main(
 		radius_um=args.radius_um,
 		layer_weight_decay_lambda=args.layer_weight_decay_lambda,
 		mi_bin_width_ms=args.mi_bin_width_ms,
+		duration_ms=args.duration_ms,
 		seed_value=args.seed,
 		output_public_dir=args.output_public_dir,
 		output_internal_dir=args.output_internal_dir,

@@ -79,7 +79,6 @@ if args.duration_ms <= 0.0:
 if args.n_uniform_layers < 0:
     raise ValueError('--n-uniform-layers must be non-negative.')
 
-set_simulation_duration_ms(args.duration_ms)
 output_public_dir = Path(args.output_public_dir)
 output_internal_dir = Path(args.output_internal_dir)
 output_public_dir.mkdir(parents=True, exist_ok=True)
@@ -323,7 +322,7 @@ output_public_dir.mkdir(parents=True, exist_ok=True)
 output_internal_dir.mkdir(parents=True, exist_ok=True)
 
 # Persist lower-layer summary signal and geometry for downstream readout processing.
-expected_samples = int(np.round(float(duration / (args.summary_dt_ms * ms))))
+expected_samples = int(np.round(float(args.duration_ms / args.summary_dt_ms)))
 summary_blocks = []
 for monitor in state_mon_exc_lower:
     if args.summary_signal == 'v':
