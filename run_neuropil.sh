@@ -8,4 +8,10 @@ cd $PBS_O_WORKDIR
 module load Python/3.11.5-GCCcore-13.2.0
 source /rds/general/user/cen25/home/multilayer-neuropil/venv/bin/activate
 
-python regenerate_all_figures.py --radius-um 10.0 --layer-weight-decay-lambda 1.0 --summary-signal g_e --summary-dt-ms 0.1 --mi-bin-width-ms 30 --duration-ms 20000
+python regenerate_all_figures.py --radius-um 10.0 \
+    --layer-weight-decay-lambda 1.0 \
+    --summary-signal g_e \
+    --summary-dt-ms 0.5 \
+    --mi-bin-width-ms 10 \
+    --duration-ms 2000 \
+    --n-uniform-layers 2
