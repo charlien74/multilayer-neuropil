@@ -1,85 +1,193 @@
-# multilayer-neuropil
-Using a neuronal model consisting of multiple layers to explore neuropil dynamics.
+# Multilayer Neuropil
+
+Simulation and analysis code for studying how neuronal assembly structure is
+transformed across a multilayer spiking network and a spatially averaged
+neuropil readout.
+
+The main workflow builds a five-layer Brian2 network, constructs a neuropil
+readout from activity in the lower layers, and compares the structural and
+functional networks produced by the multilayer and neuropil models.
+
+## Installation
+
+Python 3.11 is recommended. From the repository root:
+
+```bash
+python -m venv venv
+source venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+The principal dependencies are Brian2, NumPy, Matplotlib, SciPy, Numba, and
+NetworkX.
+
+## End-to-End Workflow
+
+Run the complete three-stage pipeline with:
+
+```bash
+python regenerate_all_figures.py
+```
+
+This command runs, in order:
+
+1. `multilayer.py` to simulate the multilayer network and save its readout
+   spikes, summary signals, mutual-information (MI) matrix, and structural
+   adjacency matrix.
+2. `neuropil.py` to spatially average the saved lower-layer signal, simulate a
+   uniform readout layer, and save its spikes and MI matrix.
+3. `network_analysis.py` to compare structural and functional networks using
+   null-corrected DeltaCon similarity, Louvain partition similarity, and
+   distance-based MI.
+
+Figures and tabular results are written to `output/public/`. Reusable arrays,
+sparse matrices, and other intermediate data are written to
+`output/internal/`. Existing network comparison files are append-only.
+
+The settings used by the PBS launcher are equivalent to:
+
+```bash
+python regenerate_all_figures.py \
+    --radius-um 10.0 \
+    --layer-weight-decay-lambda 1.0 \
+    --summary-signal g_e \
+    --summary-dt-ms 0.5 \
+    --mi-bin-width-ms 10 \
+    --duration-ms 2000 \
+    --n-uniform-layers 2
+```
+
+Use `--output-dir` to isolate a run below both output roots, which is useful
+for parameter sweeps and parallel jobs:
+
+```bash
+python regenerate_all_figures.py --seed 3 --r-ee 1.5 --output-dir seed_3_r_ee_1_5
+```
+
+## Pipeline Parameters
+
+The end-to-end driver exposes the main simulation and analysis settings:
+
+| Option | Default | Description |
+| --- | ---: | --- |
+| `--duration-ms` | `2000` | Simulation duration in milliseconds. |
+| `--seed` | `2` | Random seed propagated through all three stages. |
+| `--r-ee` | `2.0` | Within/between-community excitatory connectivity ratio. |
+| `--n-uniform-layers` | `2` | Number of assembly-free layers at the top of the stack. |
+| `--summary-signal` | `v` | Lower-layer signal used for neuropil construction: `v`, `i_syn`, or `g_e`. |
+| `--summary-dt-ms` | `0.1` | Sampling interval for the exported summary signal. |
+| `--radius-um` | `25` | Spatial neighborhood radius of each neuropil readout neuron. |
+| `--layer-weight-decay-lambda` | `1.0` | Exponential decay rate for weighting source layers by depth. |
+| `--mi-bin-width-ms` | `5` | Spike bin width used to construct the pipeline MI matrices. |
+| `--mi-lag-ms` | `10` | Lag window used when analysis recomputes MI from spikes. |
+| `--louvain-resolution` | `1.0` | Resolution used for Louvain community detection. |
+| `--distance-based-mi-h` | `10` | Neighborhood size for distance-based MI. |
+| `--distance-based-mi-only` | off | Skip the full network comparison for expedited sweeps. |
+| `--spatial-mi-regions` | none | Perfect-square region counts for an optional spatial coarse-graining sweep. |
+| `--spatial-mi-bin-width-ms` | `20` | Spike bin width for the spatial MI sweep. |
+| `--spatial-mi-radius-um` | `100` | Half-width of the fixed spatial MI grid. |
+| `--output-dir` | `.` | Relative run directory below `output/public` and `output/internal`. |
+
+For example, the optional spatial analysis can be run with:
+
+```bash
+python regenerate_all_figures.py --spatial-mi-regions 4 9 16 25 36
+```
+
+Run `python regenerate_all_figures.py --help` for the authoritative option
+list.
+
+## Outputs
+
+Representative public outputs include:
+
+- `spatial_and_raster_all_layers.png`: spatial layouts and spike rasters.
+- `spatial_structure_3d_columns.png`: three-dimensional network structure.
+- `S_hat_values.txt`: assembly statistic by layer.
+- `mi_heatmap_multilayer_readout_exc.png`: multilayer readout MI matrix.
+- `neuropil_readout_raster.png`: neuropil readout spike raster.
+- `neuropil_proxy_column_mapping.png`: readout-to-proxy-column mapping.
+- `mi_heatmap_neuropil_readout_exc.png`: neuropil readout MI matrix.
+- `network_compare_results.txt`: append-only network comparison results.
+- `spatial_region_network_compare_results.csv`: optional spatially
+  coarse-grained comparisons.
+
+Representative internal outputs include:
+
+- `lower_layer_voltage_raw.npz`: sampled lower-layer signal and geometry used
+  by the neuropil stage. The historical filename is retained for all choices
+  of `--summary-signal`.
+- `multilayer_readout_spikes.npz` and `readout_layer_simulation.npz`: saved
+  spike events and readout simulation data.
+- `mi_matrix_multilayer_readout_exc.npz` and
+  `mi_matrix_neuropil_readout_exc.npz`: functional MI matrices.
+- `adjacency_global_sparse.npz` and `adjacency_global_layer_offsets.csv`:
+  global weighted adjacency data and population offsets.
+- `readout_avg_radius.npz` and `readout_neighborhood_radius.npz`: neuropil
+  drive and sparse neighborhood mapping.
+- `mi_matrix_multilayer_regions_*.npz`: optional region-level MI matrices.
+
+Sweep summaries, archived runs, and thesis figures are kept in the other
+subdirectories below `output/`.
+
+## Running Stages Separately
+
+Run only the multilayer simulation and suppress interactive plot windows:
+
+```bash
+python multilayer.py --no-show
+```
+
+After `multilayer.py` has produced `output/internal/lower_layer_voltage_raw.npz`,
+run the neuropil stage with:
+
+```bash
+python neuropil.py --radius-um 25 --duration-ms 2000
+```
+
+Then compare the saved networks with:
+
+```bash
+python network_analysis.py
+```
+
+Each script supports `--help`. When running stages independently, keep the
+duration, seed, signal metadata, and input/output directories consistent.
 
 ## Repository Structure
 
-- `multilayer.py`
-	- Main simulation entry point.
-	- Builds a 5-layer network in Brian2 with excitatory and inhibitory populations per layer.
-	- Uses distance-dependent intra-layer connectivity and distance-decaying inter-layer connectivity.
-	- Runs the simulation, prints spike counts and assembly metric values (`S`, `<S_shuff>`, `S - <S_shuff>`), and saves a summary figure.
+- `multilayer.py`: Brian2 multilayer simulation, assembly statistics,
+  structural exports, readout spikes, and MI outputs.
+- `neuropil.py`: spatial neuropil aggregation and uniform readout-layer
+  simulation.
+- `network_analysis.py`: structural/functional comparison, Louvain metrics,
+  null-corrected DeltaCon, distance-based MI, and spatial coarse-graining.
+- `regenerate_all_figures.py`: reproducible end-to-end pipeline driver.
+- `model_util.py`: shared model equations, parameters, geometry, connectivity,
+  and assembly-statistic utilities.
+- `mutual_information.py`: reusable spike-train MI calculations and outputs.
+- `spectral_analysis.py`: adjacency extraction and eigenspectrum utilities.
+- `generate_s_figure.py`: post-processing for assembly-statistic sweep plots.
+- `one_d.py`: one-dimensional simulation variant.
+- `analysis.ipynb`: exploratory analysis and thesis figure generation.
+- `run_neuropil.sh`: PBS batch launcher for the end-to-end workflow.
+- `util/spike_mi.py`: supporting spike MI implementation.
 
-- `model_util.py`
-	- Shared constants and model definitions (timing, neuron counts, membrane/synapse equations).
-	- Layout and connectivity helpers for clustered pentacle geometry and uniform layouts.
-	- Utility functions for assembly statistics (including shuffled controls).
+## Batch Execution
 
-- `requirements.txt`
-	- Python dependencies required to run the simulation.
+`run_neuropil.sh` is configured for a PBS environment. It expects
+`$PBS_O_WORKDIR`, the Imperial RCS Python module, and the virtual environment
+path specified in the script. Submit it on that system with:
 
-- `output/`
-	- Directory where generated plots are written.
+```bash
+qsub run_neuropil.sh
+```
 
-## Running `multilayer.py`
+The random seed can be overridden for a batch job:
 
-1. Create/activate a Python environment (recommended).
-2. Install dependencies:
+```bash
+qsub -v SEED=4 run_neuropil.sh
+```
 
-	 ```bash
-	 pip install -r requirements.txt
-	 ```
-
-3. Run the simulation from the repository root:
-
-	 ```bash
-	 python multilayer.py
-	 ```
-
-To save all figures without opening plot windows:
-
-	 ```bash
-	 python multilayer.py --no-show
-	 ```
-
-To regenerate multilayer outputs and then run neuropil using the freshly written
-`output/internal/lower_layer_voltage_raw.npz` bundle:
-
-	 ```bash
-	 python regenerate_all_figures.py
-	 ```
-
-You can override neuropil neighborhood radius for this batch run:
-
-	 ```bash
-	 python regenerate_all_figures.py --radius-um 25
-	 ```
-
-### What the script does at runtime
-
-- Initializes model parameters and random seed.
-- Creates spatial neuron layouts for each layer (top layer uses a uniform layout).
-- Constructs intra-layer and inter-layer synapses.
-- Runs the network for the configured duration.
-- Prints per-layer spike counts and assembly metrics to stdout.
-- Saves the combined spatial/raster figure to:
-	- `output/spatial_and_raster_all_layers.png`
-	- `output/spatial_structure_3d_columns.png` (3D 5-layer structural view with sampled dense intra-column E-E edges)
-	- `output/adjacency_global_sparse.npz` (global weighted adjacency from Brian2 synapses in CSR arrays)
-	- `output/adjacency_global_layer_offsets.csv` (row/column offsets for each layer's E and I blocks)
-	- `output/eigenvalues_global_dominant.png` (dominant global eigenvalues in the complex plane)
-	- `output/eigenvalues_layer_ee.png` (full E-E eigenspectrum per layer)
-
-## Common Parameters to Modify
-
-If you want to experiment with behavior, these are good starting points:
-
-- In `multilayer.py`:
-	- `N_layers`
-	- `TARGET_AVG_P_OVERALL`
-	- `max_p_exc_interlayer`, `max_p_inh_interlayer`
-	- `interlayer_decay_l`
-
-- In `model_util.py`:
-	- `duration`, `defaultclock.dt`
-	- `N_exc_c`, `N_inh`
-	- geometry terms such as `R`, `sigma_c`, `sigma_connection`
+Model-scale constants and equations are defined in `model_util.py`; prefer the
+command-line options above for reproducible experimental changes.
