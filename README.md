@@ -171,13 +171,19 @@ duration, seed, signal metadata, and input/output directories consistent.
 - `one_d.py`: one-dimensional simulation variant.
 - `analysis.ipynb`: exploratory analysis and thesis figure generation.
 - `run_neuropil.sh`: PBS batch launcher for the end-to-end workflow.
+- `bin_sweep.sh`: PBS array job for sweeping MI spike-bin widths.
+- `louvain_sweep.sh`: PBS array job for sweeping Louvain resolutions.
+- `network_analysis_sweep.sh`: PBS array job for sweeping the neighborhood
+  size used by distance-based MI analysis.
+- `spatial_regions_mi.sh`: PBS launcher for an end-to-end spatial-region MI
+  sweep.
 - `util/spike_mi.py`: supporting spike MI implementation.
 
 ## Batch Execution
 
-`run_neuropil.sh` is configured for a PBS environment. It expects
+The shell launchers are configured for a PBS environment. They expect
 `$PBS_O_WORKDIR`, the Imperial RCS Python module, and the virtual environment
-path specified in the script. Submit it on that system with:
+paths specified in the scripts. Submit the main workflow with:
 
 ```bash
 qsub run_neuropil.sh
@@ -188,6 +194,19 @@ The random seed can be overridden for a batch job:
 ```bash
 qsub -v SEED=4 run_neuropil.sh
 ```
+
+The analysis sweeps can be submitted with:
+
+```bash
+qsub bin_sweep.sh
+qsub louvain_sweep.sh
+qsub network_analysis_sweep.sh
+qsub spatial_regions_mi.sh
+```
+
+These scripts contain experiment-specific input directories, parameter ranges,
+and output names; update those values in the scripts when targeting another
+saved run.
 
 Model-scale constants and equations are defined in `model_util.py`; prefer the
 command-line options above for reproducible experimental changes.
